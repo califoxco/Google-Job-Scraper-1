@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>job-google-scrape</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #1f232c; --border: #2a2f3a;
+    --text: #e6e9ef; --muted: #9aa3b2; --accent: #6ea8fe; --good: #3fb950;
+    --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px;
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 14px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .6px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  input[type=text], input[type=number] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%;
+  }
+  input[type=text]:focus, input[type=number]:focus { outline: 1px solid var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .row .grow { flex: 1; }
+  .chk { display: flex; align-items: center; gap: 6px; color: var(--text); white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .ats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  button {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 600; }
+  button.ghost { background: transparent; }
+  button.icon { padding: 6px 10px; }
+  .actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+  pre.preview {
+    background: #0b0d11; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; font-size: 12px; color: var(--accent); white-space: pre-wrap;
+    word-break: break-all; margin: 0;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td a { color: var(--accent); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .muted { color: var(--muted); }
+  .toast {
+    position: fixed; bottom: 22px; right: 22px; background: var(--panel2);
+    border: 1px solid var(--good); color: var(--good); padding: 10px 16px;
+    border-radius: 8px; opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .runbox { background: #0b0d11; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; max-height: 180px; overflow: auto;
+    white-space: pre-wrap; display: none; }
+  select { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+  small.hint { color: var(--muted); display: block; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>job-google-scrape</h1>
+  <span class="sub">{{ stats.total }} leads collected · {{ stats.new }} new</span>
+</header>
+
+<div class="wrap">
+
+  <!-- CONFIG -->
+  <div class="panel">
+    <h2>Search keywords</h2>
+    <div id="keywords"></div>
+    <button class="ghost" onclick="addKeyword('', false)">+ Add keyword</button>
+    <small class="hint">Tick "exact" to wrap a term in quotes (exact-phrase match), e.g. "Software Engineer".</small>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Freshness</h2>
+      {% for key, opt in freshness_options.items() %}
+      <label class="chk" style="margin-bottom:8px">
+        <input type="radio" name="freshness" value="{{ key }}"
+          {% if cfg.freshness == key %}checked{% endif %} onchange="updatePreview()">
+        {{ opt.label }} <span class="muted">(tbs=qdr:{{ opt.qdr }})</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="panel">
+      <h2>Run options</h2>
+      <label>Results database (SQLite path)</label>
+      <input type="text" id="results_db" value="{{ cfg.results_db }}">
+      <div class="row" style="margin-top:12px">
+        <div class="grow">
+          <label>Max results / query</label>
+          <input type="number" id="max_results" min="1" max="100" value="{{ cfg.max_results_per_query }}">
+        </div>
+        <div class="grow">
+          <label>Delay min (s)</label>
+          <input type="number" id="min_delay" min="0" step="0.5" value="{{ cfg.min_delay_seconds }}">
+        </div>
+        <div class="grow">
+          <label>Delay max (s)</label>
+          <input type="number" id="max_delay" min="0" step="0.5" value="{{ cfg.max_delay_seconds }}">
+        </div>
+      </div>
+      <label class="chk" style="margin-top:12px">
+        <input type="checkbox" id="headless" {% if cfg.headless %}checked{% endif %}>
+        Headless (uncheck to watch the browser / solve a CAPTCHA once)
+      </label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>ATS sites</h2>
+    <div class="ats-grid" id="ats">
+      {% set all_ats = (known_ats + cfg.ats_sites) | unique %}
+      {% for site in all_ats %}
+      <label class="chk">
+        <input type="checkbox" class="ats-cb" value="{{ site }}"
+          {% if site in cfg.ats_sites %}checked{% endif %} onchange="updatePreview()">
+        {{ site }}
+      </label>
+      {% endfor %}
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input class="grow" type="text" id="custom_ats" placeholder="add a domain, e.g. workable.com">
+      <button class="ghost" onclick="addAts()">+ Add ATS</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Generated Google queries (one per ATS site)</h2>
+    <pre class="preview" id="preview"></pre>
+    <div class="actions">
+      <button class="primary" onclick="saveConfig(true)">Save config</button>
+      <button onclick="runNow()" id="runBtn">Save &amp; run now</button>
+      <span class="muted" id="runState"></span>
+    </div>
+    <div class="runbox" id="runbox"></div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="panel">
+    <h2>Recent leads</h2>
+    {% if jobs %}
+    <table>
+      <thead><tr><th>Title</th><th>ATS</th><th>First seen</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a></td>
+          <td><span class="pill">{{ j.ats }}</span></td>
+          <td class="muted">{{ j.first_seen }}</td>
+          <td>
+            <select onchange="setStatus({{ j.id }}, this.value)">
+              {% for s in ['new', 'applied', 'hidden'] %}
+              <option value="{{ s }}" {% if j.status == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No leads yet. Configure your search above and hit "Save &amp; run now".</p>
+    {% endif %}
+  </div>
+
+  <!-- RUNS -->
+  <div class="panel">
+    <h2>Recent runs</h2>
+    {% if runs %}
+    <table>
+      <thead><tr><th>Started</th><th>Queries</th><th>Found</th><th>New</th><th>Blocked</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td class="muted">{{ r.started_at }}</td>
+          <td>{{ r.queries }}</td><td>{{ r.found }}</td><td>{{ r.new_jobs }}</td>
+          <td>{{ r.blocked }}</td><td class="muted">{{ r.note }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No runs yet.</p>
+    {% endif %}
+  </div>
+
+</div>
+
+<div class="toast" id="toast">Saved</div>
+
+<script>
+const FRESHNESS = {{ freshness_options | tojson }};
+const GOOGLE_BASE = {{ google_base | tojson }};
+const INITIAL_KEYWORDS = {{ cfg.keywords | tojson }};
+
+// ---- keyword rows ----------------------------------------------------
+function addKeyword(term, exact) {
+  const wrap = document.getElementById('keywords');
+  const row = document.createElement('div');
+  row.className = 'row keyword-row';
+  row.innerHTML = `
+    <input class="grow kw-term" type="text" placeholder="keyword or phrase"
+           oninput="updatePreview()">
+    <label class="chk"><input type="checkbox" class="kw-exact" onchange="updatePreview()"> exact</label>
+    <button class="icon ghost" onclick="this.parentElement.remove(); updatePreview();">✕</button>`;
+  wrap.appendChild(row);
+  row.querySelector('.kw-term').value = term || '';
+  row.querySelector('.kw-exact').checked = !!exact;
+}
+
+function addAts() {
+  const input = document.getElementById('custom_ats');
+  const v = (input.value || '').trim();
+  if (!v) return;
+  const exists = [...document.querySelectorAll('.ats-cb')].some(cb => cb.value === v);
+  if (!exists) {
+    const lbl = document.createElement('label');
+    lbl.className = 'chk';
+    lbl.innerHTML = `<input type="checkbox" class="ats-cb" value="${v}" checked onchange="updatePreview()"> ${v}`;
+    document.getElementById('ats').appendChild(lbl);
+  } else {
+    [...document.querySelectorAll('.ats-cb')].find(cb => cb.value === v).checked = true;
+  }
+  input.value = '';
+  updatePreview();
+}
+
+// ---- read form -------------------------------------------------------
+function readKeywords() {
+  return [...document.querySelectorAll('.keyword-row')].map(r => ({
+    term: r.querySelector('.kw-term').value.trim(),
+    exact: r.querySelector('.kw-exact').checked,
+  })).filter(k => k.term);
+}
+function readAts() {
+  return [...document.querySelectorAll('.ats-cb')].filter(cb => cb.checked).map(cb => cb.value);
+}
+function readFreshness() {
+  const el = document.querySelector('input[name=freshness]:checked');
+  return el ? el.value : 'week';
+}
+function readPayload() {
+  return {
+    keywords: readKeywords(),
+    freshness: readFreshness(),
+    ats_sites: readAts(),
+    results_db: document.getElementById('results_db').value.trim(),
+    headless: document.getElementById('headless').checked,
+    max_results_per_query: parseInt(document.getElementById('max_results').value || '30', 10),
+    min_delay_seconds: parseFloat(document.getElementById('min_delay').value || '3'),
+    max_delay_seconds: parseFloat(document.getElementById('max_delay').value || '8'),
+  };
+}
+
+// ---- live query preview (mirrors query.py ordering) ------------------
+function buildUrl(keywords, ats, freshness) {
+  const exact = [], plain = [];
+  keywords.forEach(k => k.exact ? exact.push(`"${k.term}"`) : plain.push(k.term));
+  const parts = [...exact];
+  if (ats) parts.push(`site:${ats}`);
+  parts.push(...plain);
+  const p = new URLSearchParams({ q: parts.join(' '), hl: 'en', gl: 'us' });
+  const qdr = FRESHNESS[freshness] && FRESHNESS[freshness].qdr;
+  if (qdr) p.set('tbs', `qdr:${qdr}`);
+  return GOOGLE_BASE + '?' + p.toString().replace(/\+/g, '%20');
+}
+function updatePreview() {
+  const kws = readKeywords(), fresh = readFreshness();
+  let sites = readAts();
+  if (!sites.length) sites = [''];
+  document.getElementById('preview').textContent =
+    sites.map(s => buildUrl(kws, s, fresh)).join('\n\n');
+}
+
+// ---- save / run ------------------------------------------------------
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+async function saveConfig(showToast) {
+  const res = await fetch('/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(readPayload()),
+  });
+  const data = await res.json();
+  if (showToast) toast(data.ok ? 'Config saved' : 'Save failed');
+  return data.ok;
+}
+async function runNow() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  await saveConfig(false);
+  const res = await fetch('/run', { method: 'POST' });
+  if (res.status === 409) { document.getElementById('runState').textContent = 'Already running…'; btn.disabled = false; return; }
+  const box = document.getElementById('runbox');
+  box.style.display = 'block'; box.textContent = 'Starting…';
+  poll();
+}
+async function poll() {
+  const res = await fetch('/run-status');
+  const st = await res.json();
+  const box = document.getElementById('runbox');
+  box.textContent = (st.log || []).join('\n') || 'Working…';
+  box.scrollTop = box.scrollHeight;
+  if (st.running) {
+    document.getElementById('runState').textContent = 'Running…';
+    setTimeout(poll, 1200);
+  } else {
+    document.getElementById('runBtn').disabled = false;
+    if (st.error) {
+      document.getElementById('runState').textContent = 'Error: ' + st.error;
+    } else if (st.summary) {
+      const s = st.summary;
+      document.getElementById('runState').textContent =
+        `Done — ${s.new} new of ${s.found} found, ${s.blocked} blocked.`;
+      setTimeout(() => location.reload(), 1500);
+    }
+  }
+}
+async function setStatus(id, status) {
+  await fetch(`/job/${id}/status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+}
+
+// ---- init ------------------------------------------------------------
+INITIAL_KEYWORDS.forEach(k => addKeyword(k.term, k.exact));
+if (!INITIAL_KEYWORDS.length) addKeyword('', false);
+updatePreview();
+</script>
+</body>
+</html>

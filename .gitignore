@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local browser profile (cookies / solved CAPTCHAs live here)
+.browser-profile/
+
+# Scrape output + logs (your data, not source)
+results/
+*.log
+
+# Your local config (seeded from config.example.json by the UI)
+config.json

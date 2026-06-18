@@ -1,0 +1,14 @@
+{
+  "keywords": [
+    { "term": "Software Engineer", "exact": true },
+    { "term": "San Francisco", "exact": true },
+    { "term": "remote", "exact": false }
+  ],
+  "freshness": "week",
+  "ats_sites": ["greenhouse.io"],
+  "results_db": "results/jobs.db",
+  "headless": true,
+  "max_results_per_query": 30,
+  "min_delay_seconds": 3.0,
+  "max_delay_seconds": 8.0
+}
