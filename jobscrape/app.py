@@ -71,6 +71,10 @@ def save():
     cfg["freshness"] = data.get("freshness", cfg["freshness"])
     cfg["ats_sites"] = data.get("ats_sites", cfg["ats_sites"])
     cfg["results_db"] = data.get("results_db", cfg["results_db"])
+    cfg["provider"] = data.get("provider", cfg.get("provider", "playwright"))
+    cfg["scrapingbee_api_key"] = data.get(
+        "scrapingbee_api_key", cfg.get("scrapingbee_api_key", "")
+    )
     cfg["headless"] = bool(data.get("headless", cfg["headless"]))
     cfg["max_results_per_query"] = int(
         data.get("max_results_per_query", cfg["max_results_per_query"])

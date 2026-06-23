@@ -8,6 +8,7 @@ fresh checkout runs without any setup).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 # Project root = parent of the jobscrape package directory.
@@ -51,11 +52,21 @@ DEFAULT_CONFIG = {
     "freshness": "week",
     "ats_sites": ["greenhouse.io"],
     "results_db": "results/jobs.db",
+    # Fetch backend: "scrapingbee" (API, never blocked) or "playwright"
+    # (local headless Chromium).
+    "provider": "playwright",
+    "scrapingbee_api_key": "",
+    # Playwright-only knobs:
     "headless": True,
     "max_results_per_query": 30,
     "min_delay_seconds": 3.0,
     "max_delay_seconds": 8.0,
 }
+
+
+def get_scrapingbee_key(cfg: dict) -> str:
+    """API key from env (preferred, keeps secrets out of files) or config."""
+    return os.environ.get("SCRAPINGBEE_API_KEY") or cfg.get("scrapingbee_api_key", "")
 
 
 def load_config() -> dict:

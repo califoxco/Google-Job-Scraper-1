@@ -90,6 +90,23 @@
     <small class="hint">Tick "exact" to wrap a term in quotes (exact-phrase match), e.g. "Software Engineer".</small>
   </div>
 
+  <div class="panel">
+    <h2>Fetch provider</h2>
+    <label class="chk" style="margin-bottom:8px">
+      <input type="radio" name="provider" value="scrapingbee"
+        {% if cfg.provider == 'scrapingbee' %}checked{% endif %} onchange="updatePreview()">
+      ScrapingBee API <span class="muted">(managed proxies — never blocked, recommended)</span>
+    </label>
+    <label class="chk" style="margin-bottom:12px">
+      <input type="radio" name="provider" value="playwright"
+        {% if cfg.provider == 'playwright' %}checked{% endif %} onchange="updatePreview()">
+      Headless browser <span class="muted">(local Playwright; can hit CAPTCHAs)</span>
+    </label>
+    <label>ScrapingBee API key</label>
+    <input type="password" id="sb_key" value="{{ cfg.scrapingbee_api_key }}" placeholder="paste key (stored in config.json)">
+    <small class="hint">Or set the <code>SCRAPINGBEE_API_KEY</code> env var (takes precedence, keeps it out of files).</small>
+  </div>
+
   <div class="grid">
     <div class="panel">
       <h2>Freshness</h2>
@@ -266,6 +283,8 @@ function readPayload() {
     freshness: readFreshness(),
     ats_sites: readAts(),
     results_db: document.getElementById('results_db').value.trim(),
+    provider: (document.querySelector('input[name=provider]:checked') || {}).value || 'playwright',
+    scrapingbee_api_key: document.getElementById('sb_key').value.trim(),
     headless: document.getElementById('headless').checked,
     max_results_per_query: parseInt(document.getElementById('max_results').value || '30', 10),
     min_delay_seconds: parseFloat(document.getElementById('min_delay').value || '3'),

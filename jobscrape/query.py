@@ -51,10 +51,20 @@ def build_url(keywords: list[dict], ats_site: str, freshness: str) -> str:
 
 
 def build_all_urls(cfg: dict) -> list[dict]:
-    """Return [{ats, url}, ...] — one entry per configured ATS site."""
+    """Return [{ats, q, url}, ...] — one entry per configured ATS site.
+
+    ``q`` is the raw search string (for the ScrapingBee API); ``url`` is the
+    full Google URL (for the Playwright backend and the UI preview).
+    """
     urls: list[dict] = []
     sites = cfg.get("ats_sites") or [""]
     freshness = cfg.get("freshness", "week")
     for site in sites:
-        urls.append({"ats": site, "url": build_url(cfg["keywords"], site, freshness)})
+        urls.append(
+            {
+                "ats": site,
+                "q": build_query_string(cfg["keywords"], site),
+                "url": build_url(cfg["keywords"], site, freshness),
+            }
+        )
     return urls

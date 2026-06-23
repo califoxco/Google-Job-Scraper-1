@@ -16,9 +16,9 @@ from .scraper import run_scrape
 def main() -> None:
     cfg = load_config()
     print("job-google-scrape")
+    print(f"  provider  : {cfg.get('provider')}")
     print(f"  freshness : {cfg.get('freshness')}")
     print(f"  ats sites : {', '.join(cfg.get('ats_sites', [])) or '(none)'}")
-    print(f"  headless  : {cfg.get('headless')}")
     print("-" * 40)
 
     summary = run_scrape(cfg)

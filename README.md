@@ -7,24 +7,27 @@ UI to tune the search and browse leads. Built to be driven by a scheduled task
 that runs every few hours.
 
 ```
-keywords + freshness + ATS sites  ->  Google search (headless Chromium)  ->  SQLite leads
-                          (config UI)                                  (deduped by URL)
+keywords + freshness + ATS sites  ->  Google search (ScrapingBee | Playwright)  ->  SQLite leads
+                          (config UI)                                          (deduped by URL)
 ```
 
-## ⚠️ Read this first
+## Fetch providers
 
-Scraping `google.com/search` is against Google's Terms of Service, and Google
-actively detects automated traffic. To survive an unattended schedule this tool:
+Two interchangeable backends, picked in the UI or via `"provider"` in
+`config.json`:
 
-- drives a **real headless Chromium** (Playwright), not raw HTTP;
-- uses a **persistent browser profile** (`.browser-profile/`) so cookies — and
-  any CAPTCHA you solve once in headed mode — carry over to later runs;
-- adds **randomized human-like delays** between queries.
-
-Even so, expect occasional CAPTCHAs from a single home IP. Keep the query
-volume low (a few ATS sites, every few hours). If you want zero blocking, the
-clean alternative is Google's official **Custom Search JSON API** — ask and it
-can be added as an optional backend.
+- **`scrapingbee`** (recommended) — calls the [ScrapingBee Google Search
+  API](https://www.scrapingbee.com/documentation/google/), which uses managed
+  proxies and returns clean structured JSON. **Never gets blocked**, so it's the
+  right choice for an unattended schedule. Needs an API key (set
+  `scrapingbee_api_key` in `config.json`, or the `SCRAPINGBEE_API_KEY` env var,
+  which takes precedence). Each query spends ScrapingBee credits.
+- **`playwright`** — drives a **real headless Chromium** locally (no API cost).
+  Uses a **persistent browser profile** (`.browser-profile/`) and randomized
+  delays. Free, but scraping `google.com/search` violates Google's ToS and a
+  single home IP **will** hit CAPTCHAs on a schedule. If blocked, solve one
+  challenge by hand: `python -m jobscrape.warmup` (opens a real window; solve it,
+  close it, and the saved session unblocks later headless runs).
 
 ## Setup
 
@@ -35,7 +38,14 @@ cd C:\Users\alex7\Projects\job-google-scrape
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-playwright install chromium
+playwright install chromium      # only needed for the playwright provider
+```
+
+Then set your ScrapingBee key — either in the UI's **Fetch provider** panel
+(saved to `config.json`) or as an env var:
+
+```powershell
+$env:SCRAPINGBEE_API_KEY = "your-key"
 ```
 
 ## Configure (the UI)
@@ -55,8 +65,11 @@ Open http://127.0.0.1:5050 and set:
   `tbs=qdr:w` / `qdr:d3` / `qdr:d`).
 - **ATS sites** — toggle Greenhouse, Lever, Ashby, etc., or add a custom
   domain. One Google query is run per selected site.
+- **Fetch provider** — ScrapingBee (recommended) or Playwright, plus the
+  ScrapingBee API key.
 - **Results database** — where the SQLite file is written.
-- **Run options** — headless on/off, max results per query, inter-query delays.
+- **Run options** — max results per query; headless on/off and inter-query
+  delays (Playwright provider only).
 
 The page shows a live preview of the exact Google URLs it will hit, and lets
 you **Save & run now** to test immediately. Collected leads appear in the
@@ -76,14 +89,19 @@ Config is saved to `config.json`. The scraper reads the same file.
 .\.venv\Scripts\python.exe -m jobscrape.run
 ```
 
-Prints a per-query log and a summary (queries / found / new / blocked). Exit
-code `2` means every query was blocked.
+Prints a per-query log and a summary (provider / queries / found / new /
+blocked). Exit code `2` means every query failed or was blocked.
 
-### First-run tip — solve a CAPTCHA once
+### Playwright got blocked? Solve a CAPTCHA once
 
-If runs get blocked, uncheck **Headless** in the UI (or set `"headless": false`
-in `config.json`) and run once. A Chromium window opens; solve any CAPTCHA /
-consent prompt. It's saved to `.browser-profile/`, then switch headless back on.
+Only relevant to the `playwright` provider (ScrapingBee never blocks). Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m jobscrape.warmup
+```
+
+A real Chromium window opens; solve the CAPTCHA / accept consent, then close it.
+The session is saved to `.browser-profile/` and reused by later headless runs.
 
 ## Schedule it (Windows Task Scheduler)
 
@@ -111,8 +129,10 @@ you'd instead add a crontab line pointing at `python -m jobscrape.run`.)
 ```
 jobscrape/
   config.py      defaults, load/save config.json, freshness + ATS constants
-  query.py       build Google search URLs from the config
-  scraper.py     Playwright scraping, consent/CAPTCHA handling, parsing
+  query.py       build Google search strings / URLs from the config
+  scrapingbee.py ScrapingBee Google Search API backend
+  scraper.py     provider dispatch + Playwright backend, parsing, storage loop
+  warmup.py      headed browser to solve a CAPTCHA once (Playwright provider)
   storage.py     SQLite store, dedupe-by-URL, runs log
   run.py         CLI entry point (what the schedule runs)
   app.py         Flask config UI

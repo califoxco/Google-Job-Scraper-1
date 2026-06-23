@@ -7,6 +7,8 @@
   "freshness": "week",
   "ats_sites": ["greenhouse.io"],
   "results_db": "results/jobs.db",
+  "provider": "scrapingbee",
+  "scrapingbee_api_key": "",
   "headless": true,
   "max_results_per_query": 30,
   "min_delay_seconds": 3.0,
