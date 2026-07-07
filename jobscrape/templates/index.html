@@ -16,11 +16,19 @@
     font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   }
   header {
-    padding: 18px 24px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: baseline; gap: 14px;
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 200;
+    background: var(--bg); box-shadow: 0 2px 12px rgba(0,0,0,.55);
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
   header .sub { color: var(--muted); font-size: 13px; }
+  .hbtn {
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+    color: var(--text); text-decoration: none; font-size: 13px;
+    background: var(--panel2); white-space: nowrap;
+  }
+  .hbtn:hover { border-color: var(--accent); }
   .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
@@ -72,22 +80,49 @@
   select { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 4px 8px; font-size: 12px; }
   small.hint { color: var(--muted); display: block; margin-top: 4px; }
+  .kwset { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: #14171d; }
+  .kwset-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .tracker-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .tracker-controls #search { flex: 1; min-width: 220px; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--accent); }
+  th.sortable.asc::after { content: " ▲"; color: var(--accent); }
+  th.sortable.desc::after { content: " ▼"; color: var(--accent); }
+  td.nowrap { white-space: nowrap; }
+  .notes-in { background: transparent; border: 1px solid transparent; color: var(--text);
+    border-radius: 5px; padding: 5px 7px; font-size: 12px; width: 100%; min-width: 160px; }
+  .notes-in:hover { border-color: var(--border); }
+  .notes-in:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
+  .applied-cb, .na-cb { width: 16px; height: 16px; cursor: pointer; }
+  tr.applied-row td { opacity: .6; }
+  tr.dismissed-row td { opacity: .4; }
+  tr.dismissed-row td a { text-decoration: line-through; }
+  .btn-export {
+    margin-left: auto; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 6px 14px; font-size: 13px;
+    text-decoration: none; white-space: nowrap;
+  }
+  .btn-export:hover { border-color: var(--good); color: var(--good); }
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
 <header>
   <h1>job-google-scrape</h1>
-  <span class="sub">{{ stats.total }} leads collected · {{ stats.new }} new</span>
+  <span class="sub">{{ stats.total }} leads · {{ stats.new }} new · {{ stats.applied }} applied{% if stats.applied_va %} ({{ stats.applied_va }} by VA){% endif %} · {{ stats.dismissed }} dismissed</span>
+  <span style="flex:1"></span>
+  <a class="hbtn" href="/export/applied.xlsx">⬇ Export applied (Excel)</a>
+  <a class="hbtn" href="/assistant" title="What your VA sees">VA view</a>
 </header>
 
 <div class="wrap">
 
   <!-- CONFIG -->
   <div class="panel">
-    <h2>Search keywords</h2>
-    <div id="keywords"></div>
-    <button class="ghost" onclick="addKeyword('', false)">+ Add keyword</button>
-    <small class="hint">Tick "exact" to wrap a term in quotes (exact-phrase match), e.g. "Software Engineer".</small>
+    <h2>Search keywords <span class="muted" style="text-transform:none;letter-spacing:0">— each set runs against every source</span></h2>
+    <div id="keyword-sets"></div>
+    <button class="ghost" onclick="addSet()">+ Add search set</button>
+    <small class="hint">Tick "exact" to quote a term (e.g. "Software Engineer"). "+ Add search set" copies the last set so shared terms (San Francisco, remote) carry over — just change the role.</small>
   </div>
 
   <div class="panel">
@@ -145,25 +180,34 @@
   </div>
 
   <div class="panel">
-    <h2>ATS sites</h2>
+    <h2>Sources <span class="muted" style="text-transform:none;letter-spacing:0">— hover a toggle to see its Google query</span></h2>
     <div class="ats-grid" id="ats">
-      {% set all_ats = (known_ats + cfg.ats_sites) | unique %}
-      {% for site in all_ats %}
-      <label class="chk">
-        <input type="checkbox" class="ats-cb" value="{{ site }}"
-          {% if site in cfg.ats_sites %}checked{% endif %} onchange="updatePreview()">
-        {{ site }}
+      {% set preset_keys = ats_presets | map(attribute='key') | list %}
+      {% for p in ats_presets %}
+      <label class="chk" title="{{ p.query }}">
+        <input type="checkbox" class="ats-cb" value="{{ p.key }}" data-q="{{ p.query }}"
+          {% if p.key in cfg.ats_sites %}checked{% endif %} onchange="updatePreview()">
+        {{ p.label }}
       </label>
+      {% endfor %}
+      {% for key in cfg.ats_sites %}
+        {% if key not in preset_keys %}
+        <label class="chk" title="site:{{ key }}">
+          <input type="checkbox" class="ats-cb" value="{{ key }}" data-q="site:{{ key }}"
+            checked onchange="updatePreview()">
+          {{ key }}
+        </label>
+        {% endif %}
       {% endfor %}
     </div>
     <div class="row" style="margin-top:12px">
-      <input class="grow" type="text" id="custom_ats" placeholder="add a domain, e.g. workable.com">
-      <button class="ghost" onclick="addAts()">+ Add ATS</button>
+      <input class="grow" type="text" id="custom_ats" placeholder="add a domain, e.g. taleo.net">
+      <button class="ghost" onclick="addAts()">+ Add domain</button>
     </div>
   </div>
 
   <div class="panel">
-    <h2>Generated Google queries (one per ATS site)</h2>
+    <h2>Generated Google queries (one per source)</h2>
     <pre class="preview" id="preview"></pre>
     <div class="actions">
       <button class="primary" onclick="saveConfig(true)">Save config</button>
@@ -173,29 +217,72 @@
     <div class="runbox" id="runbox"></div>
   </div>
 
-  <!-- RESULTS -->
+  <!-- TRACKER -->
   <div class="panel">
-    <h2>Recent leads</h2>
+    <h2>Leads &amp; application tracker</h2>
     {% if jobs %}
-    <table>
-      <thead><tr><th>Title</th><th>ATS</th><th>First seen</th><th>Status</th></tr></thead>
+    <div class="tracker-controls">
+      <input type="text" id="search" placeholder="search title / company / notes…" oninput="applyFilters()">
+      <select id="statusFilter" onchange="applyFilters()">
+        <option value="">all statuses</option>
+        {% for s in ['new','applied','interviewing','offer','rejected','dismissed','hidden'] %}
+        <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      </select>
+      <label class="chk"><input type="checkbox" id="hideApplied" checked onchange="applyFilters()"> hide applied</label>
+      <label class="chk"><input type="checkbox" id="hideDismissed" checked onchange="applyFilters()"> hide dismissed</label>
+    </div>
+    <table id="leads">
+      <thead><tr>
+        <th class="sortable" data-key="applied" onclick="sortBy(this)" title="Applied">✓</th>
+        <th class="sortable" data-key="dismissed" onclick="sortBy(this)" title="Not a real link / not applicable">✕</th>
+        <th class="sortable" data-key="title" onclick="sortBy(this)">Title</th>
+        <th class="sortable" data-key="ats" onclick="sortBy(this)">Source</th>
+        <th class="sortable found-h" data-key="first_seen" onclick="sortBy(this)">Found</th>
+        <th class="sortable" data-key="applied_at" onclick="sortBy(this)">Applied</th>
+        <th class="sortable" data-key="status" onclick="sortBy(this)">Status</th>
+        <th>Notes</th>
+      </tr></thead>
       <tbody>
       {% for j in jobs %}
-        <tr>
+        <tr data-id="{{ j.id }}" data-status="{{ j.status }}"
+            data-applied="{{ '1' if j.applied_at else '' }}"
+            data-title="{{ (j.title or j.url)|lower }}" data-ats="{{ j.ats|lower }}"
+            data-notes="{{ (j.notes or '')|lower }}">
+          <td><input type="checkbox" class="applied-cb" {% if j.applied_at %}checked{% endif %}
+                     onchange="setApplied({{ j.id }}, this.checked)"></td>
+          <td><input type="checkbox" class="na-cb" title="Not a real link / not applicable"
+                     {% if j.status == 'dismissed' %}checked{% endif %}
+                     onchange="setDismissed({{ j.id }}, this.checked)"></td>
           <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a></td>
           <td><span class="pill">{{ j.ats }}</span></td>
-          <td class="muted">{{ j.first_seen }}</td>
+          <td class="muted nowrap found-at">{{ j.first_seen[:10] }}</td>
+          <td class="muted nowrap applied-at">{{ (j.applied_at or '')|replace('T',' ') }}{% if j.applied_by == 'va' %} <span class="pill">VA</span>{% endif %}</td>
           <td>
-            <select onchange="setStatus({{ j.id }}, this.value)">
-              {% for s in ['new', 'applied', 'hidden'] %}
+            <select class="status-sel" onchange="setStatus({{ j.id }}, this.value)">
+              {% for s in ['new','applied','interviewing','offer','rejected','dismissed','hidden'] %}
               <option value="{{ s }}" {% if j.status == s %}selected{% endif %}>{{ s }}</option>
               {% endfor %}
             </select>
           </td>
+          <td><input class="notes-in" value="{{ j.notes or '' }}" placeholder="…"
+                     onblur="setNotes({{ j.id }}, this.value)"></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    <div class="pager">
+      <button class="icon ghost" id="pgPrev" onclick="pgNav(-1)">‹ Prev</button>
+      <span class="muted" id="pgInfo"></span>
+      <button class="icon ghost" id="pgNext" onclick="pgNav(1)">Next ›</button>
+      <select id="pgSize" onchange="pageSize=+this.value;applyFilters()">
+        <option value="25" selected>25 / page</option>
+        <option value="50">50 / page</option>
+        <option value="100">100 / page</option>
+        <option value="9999">All</option>
+      </select>
+      <span class="muted" id="visCount"></span>
+    </div>
     {% else %}
     <p class="muted">No leads yet. Configure your search above and hit "Save &amp; run now".</p>
     {% endif %}
@@ -229,21 +316,50 @@
 <script>
 const FRESHNESS = {{ freshness_options | tojson }};
 const GOOGLE_BASE = {{ google_base | tojson }};
-const INITIAL_KEYWORDS = {{ cfg.keywords | tojson }};
+const INITIAL_SETS = {{ cfg.keyword_sets | tojson }};
 
-// ---- keyword rows ----------------------------------------------------
-function addKeyword(term, exact) {
-  const wrap = document.getElementById('keywords');
+// ---- keyword sets ----------------------------------------------------
+function addKeywordRow(rowsEl, term, exact) {
   const row = document.createElement('div');
   row.className = 'row keyword-row';
   row.innerHTML = `
     <input class="grow kw-term" type="text" placeholder="keyword or phrase"
            oninput="updatePreview()">
     <label class="chk"><input type="checkbox" class="kw-exact" onchange="updatePreview()"> exact</label>
-    <button class="icon ghost" onclick="this.parentElement.remove(); updatePreview();">✕</button>`;
-  wrap.appendChild(row);
+    <button class="icon ghost" onclick="this.closest('.keyword-row').remove(); updatePreview();">✕</button>`;
+  rowsEl.appendChild(row);
   row.querySelector('.kw-term').value = term || '';
   row.querySelector('.kw-exact').checked = !!exact;
+}
+
+function renderSet(setData) {
+  const wrap = document.getElementById('keyword-sets');
+  const set = document.createElement('div');
+  set.className = 'kwset';
+  set.innerHTML = `
+    <div class="kwset-head">
+      <span class="muted">Search set</span><span style="flex:1"></span>
+      <button class="icon ghost dup" type="button">⧉ duplicate</button>
+      <button class="icon ghost rm" type="button">✕ remove</button>
+    </div>
+    <div class="kw-rows"></div>
+    <button class="ghost addkw" type="button">+ keyword</button>`;
+  wrap.appendChild(set);
+  const rows = set.querySelector('.kw-rows');
+  const seed = (setData && setData.length) ? setData : [{ term: '', exact: false }];
+  seed.forEach(k => addKeywordRow(rows, k.term, k.exact));
+  set.querySelector('.addkw').onclick = () => { addKeywordRow(rows, '', false); updatePreview(); };
+  set.querySelector('.dup').onclick = () => { renderSet(readSet(set)); updatePreview(); };
+  set.querySelector('.rm').onclick = () => {
+    if (document.querySelectorAll('.kwset').length > 1) { set.remove(); updatePreview(); }
+  };
+}
+
+function addSet() {
+  const sets = document.querySelectorAll('.kwset');
+  const seed = sets.length ? readSet(sets[sets.length - 1]) : [{ term: '', exact: false }];
+  renderSet(seed);
+  updatePreview();
 }
 
 function addAts() {
@@ -254,7 +370,8 @@ function addAts() {
   if (!exists) {
     const lbl = document.createElement('label');
     lbl.className = 'chk';
-    lbl.innerHTML = `<input type="checkbox" class="ats-cb" value="${v}" checked onchange="updatePreview()"> ${v}`;
+    lbl.title = `site:${v}`;
+    lbl.innerHTML = `<input type="checkbox" class="ats-cb" value="${v}" data-q="site:${v}" checked onchange="updatePreview()"> ${v}`;
     document.getElementById('ats').appendChild(lbl);
   } else {
     [...document.querySelectorAll('.ats-cb')].find(cb => cb.value === v).checked = true;
@@ -264,14 +381,21 @@ function addAts() {
 }
 
 // ---- read form -------------------------------------------------------
-function readKeywords() {
-  return [...document.querySelectorAll('.keyword-row')].map(r => ({
+function readSet(setEl) {
+  return [...setEl.querySelectorAll('.keyword-row')].map(r => ({
     term: r.querySelector('.kw-term').value.trim(),
     exact: r.querySelector('.kw-exact').checked,
   })).filter(k => k.term);
 }
+function readKeywordSets() {
+  return [...document.querySelectorAll('.kwset')].map(readSet).filter(s => s.length);
+}
+function readAtsSources() {
+  return [...document.querySelectorAll('.ats-cb')].filter(cb => cb.checked)
+    .map(cb => ({ key: cb.value, q: cb.dataset.q || ('site:' + cb.value) }));
+}
 function readAts() {
-  return [...document.querySelectorAll('.ats-cb')].filter(cb => cb.checked).map(cb => cb.value);
+  return readAtsSources().map(s => s.key);
 }
 function readFreshness() {
   const el = document.querySelector('input[name=freshness]:checked');
@@ -279,7 +403,7 @@ function readFreshness() {
 }
 function readPayload() {
   return {
-    keywords: readKeywords(),
+    keyword_sets: readKeywordSets(),
     freshness: readFreshness(),
     ats_sites: readAts(),
     results_db: document.getElementById('results_db').value.trim(),
@@ -293,11 +417,11 @@ function readPayload() {
 }
 
 // ---- live query preview (mirrors query.py ordering) ------------------
-function buildUrl(keywords, ats, freshness) {
+function buildUrl(keywords, sourceQ, freshness) {
   const exact = [], plain = [];
   keywords.forEach(k => k.exact ? exact.push(`"${k.term}"`) : plain.push(k.term));
   const parts = [...exact];
-  if (ats) parts.push(`site:${ats}`);
+  if (sourceQ) parts.push(sourceQ);
   parts.push(...plain);
   const p = new URLSearchParams({ q: parts.join(' '), hl: 'en', gl: 'us' });
   const qdr = FRESHNESS[freshness] && FRESHNESS[freshness].qdr;
@@ -305,11 +429,18 @@ function buildUrl(keywords, ats, freshness) {
   return GOOGLE_BASE + '?' + p.toString().replace(/\+/g, '%20');
 }
 function updatePreview() {
-  const kws = readKeywords(), fresh = readFreshness();
-  let sites = readAts();
-  if (!sites.length) sites = [''];
+  const fresh = readFreshness();
+  let sets = readKeywordSets();
+  if (!sets.length) sets = [[]];
+  let srcs = readAtsSources();
+  if (!srcs.length) srcs = [{ key: '', q: '' }];
+  const lines = [];
+  sets.forEach(kw => srcs.forEach(s => lines.push(buildUrl(kw, s.q, fresh))));
+  const total = lines.length;
+  const shown = lines.slice(0, 10).join('\n\n');
+  const more = total > 10 ? `\n\n… +${total - 10} more` : '';
   document.getElementById('preview').textContent =
-    sites.map(s => buildUrl(kws, s, fresh)).join('\n\n');
+    `${total} quer${total === 1 ? 'y' : 'ies'} per run (${sets.length} set${sets.length === 1 ? '' : 's'} × ${srcs.length} source${srcs.length === 1 ? '' : 's'})\n\n${shown}${more}`;
 }
 
 // ---- save / run ------------------------------------------------------
@@ -358,17 +489,122 @@ async function poll() {
     }
   }
 }
-async function setStatus(id, status) {
-  await fetch(`/job/${id}/status`, {
+// ---- tracker: edit + filter + sort -----------------------------------
+function rowFor(id) { return document.querySelector(`tr[data-id="${id}"]`); }
+
+function applyRowState(id, state) {
+  const tr = rowFor(id);
+  if (!tr || !state) return;
+  if (state.status !== undefined) {
+    tr.dataset.status = state.status;
+    const sel = tr.querySelector('.status-sel');
+    if (sel) sel.value = state.status;
+  }
+  if (state.applied_at !== undefined) {
+    tr.dataset.applied = state.applied_at ? '1' : '';
+    const cell = tr.querySelector('.applied-at');
+    if (cell) cell.textContent = (state.applied_at || '').replace('T', ' ');
+    const cb = tr.querySelector('.applied-cb');
+    if (cb) cb.checked = !!state.applied_at;
+    tr.classList.toggle('applied-row', !!state.applied_at);
+  }
+  // keep the ✕ checkbox + dimming in sync with the authoritative status
+  const na = tr.querySelector('.na-cb');
+  if (na) na.checked = tr.dataset.status === 'dismissed';
+  tr.classList.toggle('dismissed-row', tr.dataset.status === 'dismissed');
+  applyFilters();
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(body || {}),
   });
+  return r.json();
+}
+async function setApplied(id, checked)   { applyRowState(id, await post(`/job/${id}/applied`,   { applied: checked })); }
+async function setDismissed(id, checked) { applyRowState(id, await post(`/job/${id}/dismissed`, { dismissed: checked })); }
+async function setStatus(id, status)     { applyRowState(id, await post(`/job/${id}/status`,    { status })); }
+async function setNotes(id, notes) {
+  await post(`/job/${id}/notes`, { notes });
+  const tr = rowFor(id); if (tr) tr.dataset.notes = (notes || '').toLowerCase();
+}
+
+let filteredRows = [], currentPage = 1, pageSize = 25;
+
+function applyFilters() {
+  const q = (document.getElementById('search').value || '').toLowerCase().trim();
+  const sf = document.getElementById('statusFilter').value;
+  const hideApplied = document.getElementById('hideApplied').checked;
+  const hideDismissed = document.getElementById('hideDismissed').checked;
+  const all = [...document.querySelectorAll('#leads tbody tr')];
+  filteredRows = all.filter(tr => {
+    const d = tr.dataset;
+    if (q && !(d.title.includes(q) || d.ats.includes(q) || d.notes.includes(q))) return false;
+    if (sf && d.status !== sf) return false;
+    if (hideApplied && d.applied) return false;
+    if (hideDismissed && (d.status === 'dismissed' || d.status === 'hidden')) return false;
+    return true;
+  });
+  const pass = new Set(filteredRows);
+  all.forEach(tr => { if (!pass.has(tr)) tr.style.display = 'none'; });
+  currentPage = 1;
+  renderPage();
+}
+
+function renderPage() {
+  const total = filteredRows.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  currentPage = Math.max(1, Math.min(currentPage, pages));
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  filteredRows.forEach((tr, i) => { tr.style.display = (i >= start && i < end) ? '' : 'none'; });
+  const pgInfo = document.getElementById('pgInfo');
+  const pgPrev = document.getElementById('pgPrev');
+  const pgNext = document.getElementById('pgNext');
+  const visCount = document.getElementById('visCount');
+  if (pgInfo) pgInfo.textContent = `${currentPage} / ${pages}`;
+  if (pgPrev) pgPrev.disabled = currentPage <= 1;
+  if (pgNext) pgNext.disabled = currentPage >= pages;
+  if (visCount) visCount.textContent = `${total} matched`;
+}
+
+function pgNav(delta) { currentPage += delta; renderPage(); }
+
+let sortState = { key: null, dir: 1 };
+function sortBy(th) {
+  const key = th.dataset.key;
+  sortState.dir = (sortState.key === key) ? -sortState.dir : 1;
+  sortState.key = key;
+  document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
+  th.classList.add(sortState.dir === 1 ? 'asc' : 'desc');
+  const tbody = document.querySelector('#leads tbody');
+  const rows = [...tbody.querySelectorAll('tr')];
+  const val = (tr) => {
+    if (key === 'applied') return tr.dataset.applied ? 1 : 0;
+    if (key === 'dismissed') return tr.dataset.status === 'dismissed' ? 1 : 0;
+    if (key === 'title' || key === 'ats') return tr.dataset[key];
+    if (key === 'status') return tr.dataset.status;
+    if (key === 'applied_at') return tr.querySelector('.applied-at').textContent;
+    if (key === 'first_seen') return tr.querySelector('.found-at').textContent;
+    return '';
+  };
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * sortState.dir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+  applyFilters();
 }
 
 // ---- init ------------------------------------------------------------
-INITIAL_KEYWORDS.forEach(k => addKeyword(k.term, k.exact));
-if (!INITIAL_KEYWORDS.length) addKeyword('', false);
+(INITIAL_SETS && INITIAL_SETS.length ? INITIAL_SETS : [[{ term: '', exact: false }]]).forEach(renderSet);
 updatePreview();
+document.querySelectorAll('#leads tbody tr').forEach(tr => {
+  if (tr.dataset.applied) tr.classList.add('applied-row');
+  if (tr.dataset.status === 'dismissed') tr.classList.add('dismissed-row');
+});
+if (document.getElementById('search')) applyFilters();
 </script>
 </body>
 </html>

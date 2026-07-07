@@ -72,18 +72,24 @@ def _unwrap(href: str) -> str:
     return href
 
 
-def _is_ats_link(href: str, ats: str) -> bool:
-    """Keep only real result links on the target ATS host (drop google.com,
-    accounts, support, etc.)."""
+def _accept_host(href: str, hosts) -> bool:
+    """Keep real result links and drop search-engine junk.
+
+    ``hosts`` is a list of host substrings the result must match, or None to
+    accept any non-search-engine host (used by the wildcard careers/job-page
+    presets, whose hits land on arbitrary company domains).
+    """
     if not href:
         return False
     try:
         host = urlparse(href).netloc.lower()
     except Exception:
         return False
-    if not host or "google." in host:
+    if not host or "google." in host or "webcache." in host:
         return False
-    return ats.lower() in host if ats else True
+    if hosts is None:
+        return True
+    return any(h.lower() in host for h in hosts)
 
 
 def _maybe_consent(page) -> None:
@@ -110,12 +116,12 @@ def _looks_blocked(page) -> bool:
     return False
 
 
-def _store_target_items(store, items, ats, query_url, max_results) -> tuple[int, int]:
-    """Filter items to the ATS host and upsert them. Returns (found, new)."""
+def _store_target_items(store, items, ats, hosts, query_url, max_results) -> tuple[int, int]:
+    """Filter items to the source's hosts and upsert them. Returns (found, new)."""
     found = new = 0
     for it in items:
         href = _unwrap(it.get("href", ""))
-        if not _is_ats_link(href, ats):
+        if not _accept_host(href, hosts):
             continue
         if found >= max_results:
             break
@@ -141,14 +147,14 @@ def _run_scrapingbee(cfg, targets, store, log, max_results) -> tuple[int, int, i
     freshness = cfg.get("freshness", "week")
     total_found = total_new = failed = 0
     for i, t in enumerate(targets):
-        log(f"[{i + 1}/{len(targets)}] {t['ats'] or 'no-site'} (scrapingbee)")
+        log(f"[{i + 1}/{len(targets)}] {t.get('label') or t['ats'] or 'no-site'} (scrapingbee)")
         try:
             items = scrapingbee.search(t["q"], freshness, api_key, num=max_results)
         except Exception as e:  # noqa: BLE001 - report and move on
             failed += 1
             log(f"  x scrapingbee error: {e}")
             continue
-        f, n = _store_target_items(store, items, t["ats"], t["url"], max_results)
+        f, n = _store_target_items(store, items, t["ats"], t.get("hosts"), t["url"], max_results)
         total_found += f
         total_new += n
         log(f"  -> {f} job links ({total_new} new this run so far)")
@@ -177,7 +183,7 @@ def _run_playwright(cfg, targets, store, log, max_results) -> tuple[int, int, in
         page = context.new_page()
 
         for i, t in enumerate(targets):
-            log(f"[{i + 1}/{len(targets)}] {t['ats'] or 'no-site'} (playwright)")
+            log(f"[{i + 1}/{len(targets)}] {t.get('label') or t['ats'] or 'no-site'} (playwright)")
             try:
                 page.goto(t["url"], wait_until="domcontentloaded", timeout=30000)
                 _maybe_consent(page)
@@ -198,7 +204,7 @@ def _run_playwright(cfg, targets, store, log, max_results) -> tuple[int, int, in
                     pass
 
                 items = page.evaluate(RESULT_JS) or []
-                f, n = _store_target_items(store, items, t["ats"], t["url"], max_results)
+                f, n = _store_target_items(store, items, t["ats"], t.get("hosts"), t["url"], max_results)
                 total_found += f
                 total_new += n
                 log(f"  -> {f} job links ({total_new} new this run so far)")

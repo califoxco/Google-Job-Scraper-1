@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job application assistant</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #1f232c; --border: #2a2f3a;
+    --text: #e6e9ef; --muted: #9aa3b2; --accent: #6ea8fe; --good: #3fb950;
+    --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 200;
+    background: var(--bg); box-shadow: 0 2px 12px rgba(0,0,0,.55);
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .hbtn {
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+    color: var(--text); text-decoration: none; font-size: 13px;
+    background: var(--panel2); white-space: nowrap;
+  }
+  .hbtn:hover { border-color: var(--accent); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 14px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .6px; }
+  input[type=text] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%;
+  }
+  input[type=text]:focus { outline: 1px solid var(--accent); }
+  .chk { display: flex; align-items: center; gap: 6px; color: var(--text); white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td a { color: var(--accent); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .muted { color: var(--muted); }
+  small.hint { color: var(--muted); display: block; margin-bottom: 12px; }
+  .tracker-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .tracker-controls #search { flex: 1; min-width: 220px; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--accent); }
+  th.sortable.asc::after { content: " ▲"; color: var(--accent); }
+  th.sortable.desc::after { content: " ▼"; color: var(--accent); }
+  td.nowrap { white-space: nowrap; }
+  .notes-in { background: transparent; border: 1px solid transparent; color: var(--text);
+    border-radius: 5px; padding: 5px 7px; font-size: 12px; width: 100%; min-width: 160px; }
+  .notes-in:hover { border-color: var(--border); }
+  .notes-in:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
+  .applied-cb, .na-cb { width: 16px; height: 16px; cursor: pointer; }
+  tr.applied-row td { opacity: .6; }
+  tr.dismissed-row td { opacity: .4; }
+  tr.dismissed-row td a { text-decoration: line-through; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Job application assistant</h1>
+  <span class="sub">{{ stats.new }} to apply · {{ stats.applied }} applied</span>
+  <span style="flex:1"></span>
+  <a class="hbtn" href="/export/applied.xlsx">⬇ Export applied (Excel)</a>
+  <a class="hbtn" href="/logout">Log out</a>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Jobs to apply</h2>
+    <small class="hint">
+      Open a job link, submit the application, then tick ✓ — the date is stamped
+      automatically. Use ✕ for dead or irrelevant links. Leave a note for anything odd
+      (confirmation #, weird form, already closed…).
+    </small>
+    {% if jobs %}
+    <div class="tracker-controls">
+      <input type="text" id="search" placeholder="search title / company / notes…" oninput="applyFilters()">
+      <label class="chk"><input type="checkbox" id="hideApplied" checked onchange="applyFilters()"> hide applied</label>
+      <label class="chk"><input type="checkbox" id="hideDismissed" checked onchange="applyFilters()"> hide ✕</label>
+      <span class="muted" id="visCount"></span>
+    </div>
+    <table id="leads">
+      <thead><tr>
+        <th class="sortable" data-key="applied" onclick="sortBy(this)" title="Applied">✓</th>
+        <th class="sortable" data-key="dismissed" onclick="sortBy(this)" title="Not a real link / not applicable">✕</th>
+        <th class="sortable" data-key="title" onclick="sortBy(this)">Title</th>
+        <th class="sortable" data-key="ats" onclick="sortBy(this)">Source</th>
+        <th class="sortable" data-key="first_seen" onclick="sortBy(this)">Found</th>
+        <th class="sortable" data-key="applied_at" onclick="sortBy(this)">Applied</th>
+        <th>Notes</th>
+      </tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr data-id="{{ j.id }}" data-status="{{ j.status }}"
+            data-applied="{{ '1' if j.applied_at else '' }}"
+            data-title="{{ (j.title or j.url)|lower }}" data-ats="{{ j.ats|lower }}"
+            data-notes="{{ (j.notes or '')|lower }}">
+          <td><input type="checkbox" class="applied-cb" {% if j.applied_at %}checked{% endif %}
+                     onchange="setApplied({{ j.id }}, this.checked)"></td>
+          <td><input type="checkbox" class="na-cb" title="Not a real link / not applicable"
+                     {% if j.status == 'dismissed' %}checked{% endif %}
+                     onchange="setDismissed({{ j.id }}, this.checked)"></td>
+          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a></td>
+          <td><span class="pill">{{ j.ats }}</span></td>
+          <td class="muted nowrap found-at">{{ j.first_seen[:10] }}</td>
+          <td class="muted nowrap applied-at">{{ (j.applied_at or '')|replace('T',' ') }}</td>
+          <td><input class="notes-in" value="{{ j.notes or '' }}" placeholder="…"
+                     onblur="setNotes({{ j.id }}, this.value)"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No jobs yet — check back later.</p>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function rowFor(id) { return document.querySelector(`tr[data-id="${id}"]`); }
+
+function applyRowState(id, state) {
+  const tr = rowFor(id);
+  if (!tr || !state) return;
+  if (state.status !== undefined) tr.dataset.status = state.status;
+  if (state.applied_at !== undefined) {
+    tr.dataset.applied = state.applied_at ? '1' : '';
+    const cell = tr.querySelector('.applied-at');
+    if (cell) cell.textContent = (state.applied_at || '').replace('T', ' ');
+    const cb = tr.querySelector('.applied-cb');
+    if (cb) cb.checked = !!state.applied_at;
+    tr.classList.toggle('applied-row', !!state.applied_at);
+  }
+  const na = tr.querySelector('.na-cb');
+  if (na) na.checked = tr.dataset.status === 'dismissed';
+  tr.classList.toggle('dismissed-row', tr.dataset.status === 'dismissed');
+  applyFilters();
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  return r.json();
+}
+async function setApplied(id, checked)   { applyRowState(id, await post(`/job/${id}/applied`,   { applied: checked })); }
+async function setDismissed(id, checked) { applyRowState(id, await post(`/job/${id}/dismissed`, { dismissed: checked })); }
+async function setNotes(id, notes) {
+  await post(`/job/${id}/notes`, { notes });
+  const tr = rowFor(id); if (tr) tr.dataset.notes = (notes || '').toLowerCase();
+}
+
+function applyFilters() {
+  const q = (document.getElementById('search').value || '').toLowerCase().trim();
+  const hideApplied = document.getElementById('hideApplied').checked;
+  const hideDismissed = document.getElementById('hideDismissed').checked;
+  let shown = 0;
+  document.querySelectorAll('#leads tbody tr').forEach(tr => {
+    const d = tr.dataset;
+    let ok = true;
+    if (q && !(d.title.includes(q) || d.ats.includes(q) || d.notes.includes(q))) ok = false;
+    if (hideApplied && d.applied) ok = false;
+    if (hideDismissed && (d.status === 'dismissed' || d.status === 'hidden')) ok = false;
+    tr.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  });
+  document.getElementById('visCount').textContent = shown + ' shown';
+}
+
+let sortState = { key: null, dir: 1 };
+function sortBy(th) {
+  const key = th.dataset.key;
+  sortState.dir = (sortState.key === key) ? -sortState.dir : 1;
+  sortState.key = key;
+  document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
+  th.classList.add(sortState.dir === 1 ? 'asc' : 'desc');
+  const tbody = document.querySelector('#leads tbody');
+  const rows = [...tbody.querySelectorAll('tr')];
+  const val = (tr) => {
+    if (key === 'applied') return tr.dataset.applied ? 1 : 0;
+    if (key === 'dismissed') return tr.dataset.status === 'dismissed' ? 1 : 0;
+    if (key === 'title' || key === 'ats') return tr.dataset[key];
+    if (key === 'applied_at') return tr.querySelector('.applied-at').textContent;
+    if (key === 'first_seen') return tr.querySelector('.found-at').textContent;
+    return '';
+  };
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * sortState.dir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+document.querySelectorAll('#leads tbody tr').forEach(tr => {
+  if (tr.dataset.applied) tr.classList.add('applied-row');
+  if (tr.dataset.status === 'dismissed') tr.classList.add('dismissed-row');
+});
+if (document.getElementById('search')) applyFilters();
+</script>
+</body>
+</html>

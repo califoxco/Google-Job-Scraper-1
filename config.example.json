@@ -1,16 +1,27 @@
 {
-  "keywords": [
-    { "term": "Software Engineer", "exact": true },
-    { "term": "San Francisco", "exact": true },
-    { "term": "remote", "exact": false }
+  "keyword_sets": [
+    [
+      { "term": "Software Engineer", "exact": true },
+      { "term": "San Francisco", "exact": true },
+      { "term": "remote", "exact": false }
+    ],
+    [
+      { "term": "Full Stack", "exact": true },
+      { "term": "San Francisco", "exact": true },
+      { "term": "remote", "exact": false }
+    ]
   ],
   "freshness": "week",
-  "ats_sites": ["greenhouse.io"],
+  "ats_sites": ["greenhouse.io", "lever.co", "ashbyhq.com", "careers-pages"],
   "results_db": "results/jobs.db",
   "provider": "scrapingbee",
   "scrapingbee_api_key": "",
   "headless": true,
   "max_results_per_query": 30,
   "min_delay_seconds": 3.0,
-  "max_delay_seconds": 8.0
+  "max_delay_seconds": 8.0,
+  "va_password": "jobapply",
+  "admin_password": "jobadmin",
+  "ngrok_domain": "",
+  "ngrok_authtoken": ""
 }

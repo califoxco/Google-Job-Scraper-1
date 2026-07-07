@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 
 # Project root = parent of the jobscrape package directory.
@@ -25,29 +26,113 @@ FRESHNESS_OPTIONS = {
     "24h": {"label": "Past 24 hours", "qdr": "d"},
 }
 
-# Common ATS domains, seeded as toggles in the UI. site:<domain> targets
-# the public job boards these vendors host.
-KNOWN_ATS = [
-    "greenhouse.io",
-    "lever.co",
-    "ashbyhq.com",
-    "myworkdayjobs.com",
-    "smartrecruiters.com",
-    "jobvite.com",
-    "workable.com",
-    "breezy.hr",
-    "recruitee.com",
-    "icims.com",
-    "bamboohr.com",
+# Search "sources" seeded as toggles in the UI. Each is a crafted Google query
+# *fragment* (the part between the keywords and "remote"), not just a domain —
+# modeled on briansjobsearch.com. A source resolves to:
+#   key    selected value stored in config.ats_sites
+#   label  shown in the UI
+#   query  the q= fragment, e.g. "site:greenhouse.io" or an OR/wildcard group
+#   hosts  result-host filter (list of substrings); None = accept any company
+#          host (used by the wildcard "careers/job pages" presets, whose
+#          results land on arbitrary company domains).
+
+# Simple per-domain ATS: key == domain, query == "site:<domain>".
+_SIMPLE_ATS = [
+    ("greenhouse.io", "Greenhouse"),
+    ("lever.co", "Lever"),
+    ("ashbyhq.com", "Ashby"),
+    ("myworkdayjobs.com", "Workday"),
+    ("smartrecruiters.com", "SmartRecruiters"),
+    ("jobvite.com", "Jobvite"),
+    ("workable.com", "Workable"),
+    ("breezy.hr", "Breezy"),
+    ("recruitee.com", "Recruitee"),
+    ("icims.com", "iCIMS"),
+    ("bamboohr.com", "BambooHR"),
+    ("applytojob.com", "JazzHR"),
+    ("gem.com", "Gem"),
+    ("dover.io", "Dover"),
+    ("teamtailor.com", "Teamtailor"),
+    ("pinpointhq.com", "Pinpoint"),
+    ("careerpuck.com", "CareerPuck"),
+    ("catsone.com", "CATS"),
+    ("trakstar.com", "Trakstar"),
+    ("homerun.co", "Homerun"),
+    ("factorialhr.com", "Factorial"),
+    ("keka.com", "Keka"),
+    ("trinethire.com", "TriNet Hire"),
+    ("oraclecloud.com", "Oracle Recruiting"),
+    ("jobs.gusto.com", "Gusto"),
+    ("wellfound.com", "Wellfound"),
+    ("workatastartup.com", "Y Combinator"),
+    ("builtin.com", "Built In"),
+    ("remotive.com", "Remotive"),
+    ("remoterocketship.com", "Remote Rocketship"),
 ]
 
+# Composite presets: multi-domain OR groups and wildcard site: operators.
+_COMPOSITE_ATS = [
+    {
+        "key": "rippling",
+        "label": "Rippling",
+        "query": "(site:rippling.com OR site:rippling-ats.com)",
+        "hosts": ["rippling.com", "rippling-ats.com"],
+    },
+    {
+        "key": "adp",
+        "label": "ADP",
+        "query": "(site:workforcenow.adp.com OR site:myjobs.adp.com)",
+        "hosts": ["adp.com"],
+    },
+    {
+        "key": "linkedin-jobs",
+        "label": "LinkedIn Jobs",
+        "query": "site:linkedin.com/jobs/view",
+        "hosts": ["linkedin.com"],
+    },
+    {
+        "key": "careers-pages",
+        "label": "Careers pages (any company)",
+        "query": "(site:careers.* OR site:*/careers/* OR site:*/career/*)",
+        "hosts": None,
+    },
+    {
+        "key": "job-pages",
+        "label": "Job / opening pages (any company)",
+        "query": (
+            "(site:*/employment/* OR site:*/opportunities/* OR site:*/openings/* "
+            "OR site:*/join-us/* OR site:*/work-with-us/*)"
+        ),
+        "hosts": None,
+    },
+]
+
+ATS_PRESETS = [
+    {"key": d, "label": lbl, "query": f"site:{d}", "hosts": [d]}
+    for d, lbl in _SIMPLE_ATS
+] + _COMPOSITE_ATS
+
+ATS_BY_KEY = {p["key"]: p for p in ATS_PRESETS}
+
+
+def get_source(key: str) -> dict:
+    """Resolve a selected source key to its preset. Unknown keys (custom
+    domains the user typed) fall back to a bare ``site:<key>`` search."""
+    if key in ATS_BY_KEY:
+        return ATS_BY_KEY[key]
+    return {"key": key, "label": key, "query": f"site:{key}", "hosts": [key]}
+
 DEFAULT_CONFIG = {
-    # Each keyword is {term, exact}. exact=True wraps it in quotes for an
-    # exact-phrase match; exact=False appends it as a loose term.
-    "keywords": [
-        {"term": "Software Engineer", "exact": True},
-        {"term": "San Francisco", "exact": True},
-        {"term": "remote", "exact": False},
+    # A list of keyword *sets*. Each set is a list of {term, exact} and becomes
+    # its own search; every set is run against every selected source, so the
+    # total queries per run = len(keyword_sets) x len(ats_sites). exact=True
+    # wraps a term in quotes (exact-phrase match); exact=False is a loose term.
+    "keyword_sets": [
+        [
+            {"term": "Software Engineer", "exact": True},
+            {"term": "San Francisco", "exact": True},
+            {"term": "remote", "exact": False},
+        ],
     ],
     "freshness": "week",
     "ats_sites": ["greenhouse.io"],
@@ -61,6 +146,16 @@ DEFAULT_CONFIG = {
     "max_results_per_query": 30,
     "min_delay_seconds": 3.0,
     "max_delay_seconds": 8.0,
+    # Lightweight auth for the hosted UI (see app.py). Deliberately simple:
+    # va_password unlocks the assistant view only; admin_password unlocks the
+    # full console when accessed through a tunnel (direct localhost access is
+    # always treated as admin). CHANGE THESE if you expose the app publicly.
+    "va_password": "jobapply",
+    "admin_password": "jobadmin",
+    # Optional ngrok settings used by start_job_scrape.ps1 (not by the app):
+    # a reserved domain gives you a permanent public link for your assistant.
+    "ngrok_domain": "",
+    "ngrok_authtoken": "",
 }
 
 
@@ -70,12 +165,23 @@ def get_scrapingbee_key(cfg: dict) -> str:
 
 
 def load_config() -> dict:
-    """Load config.json, filling in any missing keys from DEFAULT_CONFIG."""
+    """Load config.json, filling in any missing keys from DEFAULT_CONFIG.
+
+    Migrates the legacy single ``keywords`` list into ``keyword_sets``.
+    """
+    data: dict = {}
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return {**DEFAULT_CONFIG, **data}
-    return dict(DEFAULT_CONFIG)
+    cfg = {**DEFAULT_CONFIG, **data}
+    if "keyword_sets" not in data and data.get("keywords"):
+        cfg["keyword_sets"] = [data["keywords"]]
+    cfg.pop("keywords", None)  # normalize away the legacy field
+    if not cfg.get("flask_secret"):
+        # Session-signing key; persisted so logins survive app restarts.
+        cfg["flask_secret"] = secrets.token_hex(32)
+        save_config(cfg)
+    return cfg
 
 
 def save_config(cfg: dict) -> None:
