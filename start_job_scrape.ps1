@@ -6,6 +6,10 @@ $Root = $PSScriptRoot
 $Py   = "$Root\.venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }  # fall back to PATH python
 
+# App config (gitignored) drives the ngrok + LLM sections below.
+$appCfg = $null
+try { $appCfg = Get-Content "$Root\config.json" -Raw | ConvertFrom-Json } catch {}
+
 Write-Host ""
 Write-Host "  Job Scrape Launcher" -ForegroundColor Cyan
 Write-Host "  -------------------"
@@ -28,6 +32,45 @@ Write-Host "  Starting sqlite-web    ->  http://127.0.0.1:8081"
 Start-Process $Py -ArgumentList '-m','sqlite_web','--host','127.0.0.1','--port','8081','results/jobs.db' `
     -WorkingDirectory $Root -WindowStyle Hidden
 
+# --- local LLM (Ollama) used by the title matcher ------------------------------
+$llmEnabled  = (-not $appCfg) -or ($appCfg.llm_match_enabled -ne $false)
+$ollamaUrl   = if ($appCfg -and $appCfg.ollama_url)   { $appCfg.ollama_url }   else { "http://127.0.0.1:11434" }
+$ollamaModel = if ($appCfg -and $appCfg.ollama_model) { $appCfg.ollama_model } else { "qwen2.5:14b" }
+
+function Get-OllamaModels {
+    try {
+        (Invoke-RestMethod "$($ollamaUrl.TrimEnd('/'))/api/tags" -TimeoutSec 3).models.name
+    } catch { $null }
+}
+
+$llmStatus = "disabled"
+if ($llmEnabled) {
+    Write-Host "  Checking local LLM     ->  $ollamaUrl"
+    $models = Get-OllamaModels
+    if ($null -eq $models) {
+        # Ollama not answering — try to start it if it's installed.
+        $ollamaExe = $null
+        $cmd = Get-Command ollama -ErrorAction SilentlyContinue
+        if ($cmd) { $ollamaExe = $cmd.Source }
+        elseif (Test-Path "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe") {
+            $ollamaExe = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
+        }
+        if ($ollamaExe) {
+            Write-Host "  Ollama not running     ->  starting it..."
+            Start-Process $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
+            foreach ($i in 1..10) {
+                Start-Sleep -Milliseconds 900
+                $models = Get-OllamaModels
+                if ($null -ne $models) { break }
+            }
+        }
+    }
+    if ($null -eq $models) { $llmStatus = "down" }
+    elseif (($models -contains $ollamaModel) -or
+            ($models | Where-Object { $_ -like "$ollamaModel*" })) { $llmStatus = "ready" }
+    else { $llmStatus = "nomodel" }
+}
+
 # --- ngrok tunnel (public link for the VA) -------------------------------------
 $ngrokExe = $null
 $cmd = Get-Command ngrok -ErrorAction SilentlyContinue
@@ -40,8 +83,6 @@ else {
 }
 
 # Token + reserved domain live in config.json (gitignored, next to the other keys)
-$appCfg = $null
-try { $appCfg = Get-Content "$Root\config.json" -Raw | ConvertFrom-Json } catch {}
 $ngrokToken  = if ($appCfg) { $appCfg.ngrok_authtoken } else { $null }
 $ngrokDomain = if ($appCfg) { $appCfg.ngrok_domain }   else { $null }
 
@@ -107,6 +148,12 @@ Write-Host ""
 Write-Host "  Everything is up:" -ForegroundColor Green
 Write-Host "    Admin UI     http://127.0.0.1:5050/admin"
 Write-Host "    DB viewer    http://127.0.0.1:8081"
+switch ($llmStatus) {
+    "ready"    { Write-Host "    LLM matcher  $ollamaModel ready ($ollamaUrl)" -ForegroundColor Green }
+    "nomodel"  { Write-Host "    LLM matcher  Ollama is up but '$ollamaModel' is missing - run: ollama pull $ollamaModel" -ForegroundColor Yellow }
+    "down"     { Write-Host "    LLM matcher  Ollama NOT reachable - matching falls back to string rules (staff/director/manager)" -ForegroundColor Yellow }
+    "disabled" { Write-Host "    LLM matcher  disabled in config.json" -ForegroundColor DarkGray }
+}
 if ($vaUrl) {
     $vaPass = if ($appCfg -and $appCfg.va_password) { $appCfg.va_password } else { "jobapply" }
     Write-Host "    VA link      $vaUrl/assistant" -ForegroundColor Cyan
