@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     status      TEXT NOT NULL DEFAULT 'new',
     applied_at  TEXT,
     applied_by  TEXT,
-    notes       TEXT
+    notes       TEXT,
+    title_match INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
 CREATE INDEX IF NOT EXISTS idx_jobs_ats        ON jobs(ats);
@@ -69,9 +70,14 @@ class Storage:
     def _migrate(self) -> None:
         """Add columns introduced after a DB was first created."""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
-        for col in ("applied_at", "applied_by", "notes"):
+        for col, ctype in (
+            ("applied_at", "TEXT"),
+            ("applied_by", "TEXT"),
+            ("notes", "TEXT"),
+            ("title_match", "INTEGER"),
+        ):
             if col not in cols:
-                self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
+                self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ctype}")
         self.conn.commit()
 
     # --- jobs -------------------------------------------------------------
@@ -182,6 +188,27 @@ class Storage:
 
     def set_notes(self, job_id: int, notes: str) -> None:
         self.conn.execute("UPDATE jobs SET notes = ? WHERE id = ?", (notes, job_id))
+        self.conn.commit()
+
+    def jobs_needing_match(self, limit: int = 2000) -> list[dict]:
+        """Unclassified leads for the LLM title matcher (newest first).
+
+        Skips applied/dismissed rows — the user already triaged those.
+        """
+        cur = self.conn.execute(
+            "SELECT id, title, url FROM jobs "
+            "WHERE title_match IS NULL AND applied_at IS NULL AND status != 'dismissed' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def set_title_match(self, job_id: int, match: bool | None) -> None:
+        """Record the LLM's verdict: 1 match, 0 no-match, NULL unclassified."""
+        self.conn.execute(
+            "UPDATE jobs SET title_match = ? WHERE id = ?",
+            (None if match is None else int(match), job_id),
+        )
         self.conn.commit()
 
     def applied_jobs(self) -> list[dict]:

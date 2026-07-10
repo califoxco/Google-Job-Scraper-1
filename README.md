@@ -34,6 +34,9 @@ keyword sets × sources  →  Google search (ScrapingBee | Playwright)  →  SQL
   notes, search/sort/filters.
 - **Excel export** — one click downloads your applied positions
   (date, company, title, source, status, URL, notes, applied-by).
+- **LLM title matching (local, free)** — after each scrape, a local
+  [Ollama](https://ollama.com) model judges every new lead against the roles
+  you're hunting; poor matches are hidden by default. No API key, no cost.
 - **Assistant mode** — a minimal `/assistant` view behind a shared password;
   applications made there are stamped `applied_by = va` for billing/attribution.
 - **Two fetch providers** — ScrapingBee API (never blocked) or local headless
@@ -107,6 +110,31 @@ not-a-real-link, title link, source, found/applied dates, status dropdown,
 notes. Search box, status filter, hide-applied / hide-dismissed toggles,
 sortable columns. **⬇ Export applied (Excel)** in the header downloads
 `applied-YYYY-MM-DD.xlsx` of everything you've applied to, newest first.
+
+## LLM title matching (local Ollama)
+
+Google queries return plenty of near-miss results — product managers, sales
+engineers, "Careers at X" portal pages. After each scrape, unclassified leads
+are sent (in batches, titles only) to a local Ollama model, which judges
+whether each title matches the roles you're hunting — defined as the **first
+keyword of every search set** (e.g. *Software Engineer*, *Full Stack*,
+*Frontend*). Non-matching jobs get a red `✗ match` pill and are hidden behind
+the default-on **hide poor matches** toggle in both the tracker and the
+assistant view. In the admin view, clicking the pill overrides a false
+negative.
+
+Setup: install [Ollama](https://ollama.com), pull a model
+(`ollama pull qwen2.5:14b` works well), and make sure the **LLM title
+matching** toggle in the Fetch provider panel points at it. To classify an
+existing backlog in one go:
+
+```powershell
+python -m jobscrape.matcher
+```
+
+If Ollama is down, scrapes still work — jobs simply stay unclassified and are
+retried on the next run. Disable the feature entirely with the UI toggle or
+`"llm_match_enabled": false`.
 
 ## Assistant mode (delegate your applications)
 
@@ -188,6 +216,7 @@ jobscrape/
   scraper.py       provider dispatch + Playwright backend, parsing, storage loop
   warmup.py        headed browser to solve a CAPTCHA once (Playwright provider)
   storage.py       SQLite store: dedupe-by-URL, tracker state, runs log
+  matcher.py       LLM title matching via local Ollama (hide poor matches)
   export.py        Excel (.xlsx) export of applied positions
   run.py           CLI entry point (what the schedule runs)
   app.py           Flask app: /admin, /assistant, login, tracker + export APIs

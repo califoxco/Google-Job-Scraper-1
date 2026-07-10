@@ -16,6 +16,7 @@ from playwright.sync_api import sync_playwright
 
 from . import scrapingbee
 from .config import PROJECT_ROOT, get_scrapingbee_key, resolve_db_path
+from .matcher import run_matching
 from .query import build_all_urls
 from .storage import Storage
 
@@ -246,6 +247,13 @@ def run_scrape(cfg: dict, progress=None) -> dict:
         total_found, total_new, blocked = _run_playwright(
             cfg, targets, store, log, max_results
         )
+
+    # Judge new leads' titles against the wanted roles (local LLM via Ollama).
+    # Never let matching break a scrape — unclassified rows retry next run.
+    try:
+        run_matching(store, cfg, progress=log)
+    except Exception as e:  # noqa: BLE001
+        log(f"[match] skipped: {e}")
 
     note = f"{provider}: " + ("ok" if blocked == 0 else f"{blocked} queries failed/blocked")
     store.finish_run(

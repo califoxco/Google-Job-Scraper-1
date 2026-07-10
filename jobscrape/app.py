@@ -203,6 +203,15 @@ def save():
     )
     cfg["min_delay_seconds"] = float(data.get("min_delay_seconds", cfg["min_delay_seconds"]))
     cfg["max_delay_seconds"] = float(data.get("max_delay_seconds", cfg["max_delay_seconds"]))
+    cfg["llm_match_enabled"] = bool(
+        data.get("llm_match_enabled", cfg.get("llm_match_enabled", True))
+    )
+    cfg["ollama_url"] = data.get("ollama_url", cfg.get("ollama_url", "")).strip() or cfg.get(
+        "ollama_url", "http://127.0.0.1:11434"
+    )
+    cfg["ollama_model"] = data.get("ollama_model", cfg.get("ollama_model", "")).strip() or cfg.get(
+        "ollama_model", "qwen2.5:14b"
+    )
     save_config(cfg)
     return jsonify(ok=True, config=cfg)
 
@@ -253,6 +262,18 @@ def job_dismissed(job_id: int):
     state = store.set_dismissed(job_id, bool(data.get("dismissed")))
     store.close()
     return jsonify(ok=True, **state)
+
+
+@app.post("/job/<int:job_id>/match")
+@require_role("admin")
+def job_match(job_id: int):
+    """Manual override of the LLM title-match verdict."""
+    data = request.get_json(force=True, silent=True) or {}
+    match = bool(data.get("match"))
+    store = Storage(resolve_db_path(load_config()))
+    store.set_title_match(job_id, match)
+    store.close()
+    return jsonify(ok=True, title_match=int(match))
 
 
 @app.post("/job/<int:job_id>/notes")

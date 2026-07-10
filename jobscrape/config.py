@@ -156,6 +156,12 @@ DEFAULT_CONFIG = {
     # a reserved domain gives you a permanent public link for your assistant.
     "ngrok_domain": "",
     "ngrok_authtoken": "",
+    # LLM title matching via a local Ollama model (see matcher.py). After each
+    # scrape, new leads are classified against the first keyword of every
+    # search set; non-matching jobs are hidden by default in the UI.
+    "llm_match_enabled": True,
+    "ollama_url": "http://127.0.0.1:11434",
+    "ollama_model": "qwen2.5:14b",
 }
 
 

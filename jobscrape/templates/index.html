@@ -94,6 +94,9 @@
   .notes-in:hover { border-color: var(--border); }
   .notes-in:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
   .applied-cb, .na-cb { width: 16px; height: 16px; cursor: pointer; }
+  .pill-bad { color: var(--bad); border-color: rgba(248,81,73,.5); }
+  .match-pill { cursor: pointer; }
+  .match-pill:hover { background: rgba(248,81,73,.12); }
   tr.applied-row td { opacity: .6; }
   tr.dismissed-row td { opacity: .4; }
   tr.dismissed-row td a { text-decoration: line-through; }
@@ -140,6 +143,22 @@
     <label>ScrapingBee API key</label>
     <input type="password" id="sb_key" value="{{ cfg.scrapingbee_api_key }}" placeholder="paste key (stored in config.json)">
     <small class="hint">Or set the <code>SCRAPINGBEE_API_KEY</code> env var (takes precedence, keeps it out of files).</small>
+    <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+    <label class="chk" style="margin-bottom:8px">
+      <input type="checkbox" id="llm_enabled" {% if cfg.llm_match_enabled %}checked{% endif %}>
+      LLM title matching <span class="muted">(local Ollama — flags jobs that don't match your target roles)</span>
+    </label>
+    <div class="row">
+      <div class="grow">
+        <label>Ollama URL</label>
+        <input type="text" id="ollama_url" value="{{ cfg.ollama_url }}">
+      </div>
+      <div class="grow">
+        <label>Model</label>
+        <input type="text" id="ollama_model" value="{{ cfg.ollama_model }}">
+      </div>
+    </div>
+    <small class="hint">Target roles = the first keyword of each search set. Non-matching jobs are hidden behind the "hide poor matches" toggle in the tracker.</small>
   </div>
 
   <div class="grid">
@@ -231,6 +250,7 @@
       </select>
       <label class="chk"><input type="checkbox" id="hideApplied" checked onchange="applyFilters()"> hide applied</label>
       <label class="chk"><input type="checkbox" id="hideDismissed" checked onchange="applyFilters()"> hide dismissed</label>
+      <label class="chk"><input type="checkbox" id="hideNoMatch" checked onchange="applyFilters()"> hide poor matches</label>
     </div>
     <table id="leads">
       <thead><tr>
@@ -247,6 +267,7 @@
       {% for j in jobs %}
         <tr data-id="{{ j.id }}" data-status="{{ j.status }}"
             data-applied="{{ '1' if j.applied_at else '' }}"
+            data-match="{{ '' if j.title_match is none else j.title_match }}"
             data-title="{{ (j.title or j.url)|lower }}" data-ats="{{ j.ats|lower }}"
             data-notes="{{ (j.notes or '')|lower }}">
           <td><input type="checkbox" class="applied-cb" {% if j.applied_at %}checked{% endif %}
@@ -254,7 +275,7 @@
           <td><input type="checkbox" class="na-cb" title="Not a real link / not applicable"
                      {% if j.status == 'dismissed' %}checked{% endif %}
                      onchange="setDismissed({{ j.id }}, this.checked)"></td>
-          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a></td>
+          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a>{% if j.title_match == 0 %} <span class="pill pill-bad match-pill" title="LLM: doesn't match your target titles — click to mark as a match" onclick="setMatch({{ j.id }}, true)">✗ match</span>{% endif %}</td>
           <td><span class="pill">{{ j.ats }}</span></td>
           <td class="muted nowrap found-at">{{ j.first_seen[:10] }}</td>
           <td class="muted nowrap applied-at">{{ (j.applied_at or '')|replace('T',' ') }}{% if j.applied_by == 'va' %} <span class="pill">VA</span>{% endif %}</td>
@@ -409,6 +430,9 @@ function readPayload() {
     results_db: document.getElementById('results_db').value.trim(),
     provider: (document.querySelector('input[name=provider]:checked') || {}).value || 'playwright',
     scrapingbee_api_key: document.getElementById('sb_key').value.trim(),
+    llm_match_enabled: document.getElementById('llm_enabled').checked,
+    ollama_url: document.getElementById('ollama_url').value.trim(),
+    ollama_model: document.getElementById('ollama_model').value.trim(),
     headless: document.getElementById('headless').checked,
     max_results_per_query: parseInt(document.getElementById('max_results').value || '30', 10),
     min_delay_seconds: parseFloat(document.getElementById('min_delay').value || '3'),
@@ -525,6 +549,15 @@ async function post(url, body) {
 async function setApplied(id, checked)   { applyRowState(id, await post(`/job/${id}/applied`,   { applied: checked })); }
 async function setDismissed(id, checked) { applyRowState(id, await post(`/job/${id}/dismissed`, { dismissed: checked })); }
 async function setStatus(id, status)     { applyRowState(id, await post(`/job/${id}/status`,    { status })); }
+async function setMatch(id, match) {
+  await post(`/job/${id}/match`, { match });
+  const tr = rowFor(id);
+  if (!tr) return;
+  tr.dataset.match = match ? '1' : '0';
+  const pill = tr.querySelector('.match-pill');
+  if (match && pill) pill.remove();
+  applyFilters();
+}
 async function setNotes(id, notes) {
   await post(`/job/${id}/notes`, { notes });
   const tr = rowFor(id); if (tr) tr.dataset.notes = (notes || '').toLowerCase();
@@ -537,6 +570,7 @@ function applyFilters() {
   const sf = document.getElementById('statusFilter').value;
   const hideApplied = document.getElementById('hideApplied').checked;
   const hideDismissed = document.getElementById('hideDismissed').checked;
+  const hideNoMatch = document.getElementById('hideNoMatch').checked;
   const all = [...document.querySelectorAll('#leads tbody tr')];
   filteredRows = all.filter(tr => {
     const d = tr.dataset;
@@ -544,6 +578,7 @@ function applyFilters() {
     if (sf && d.status !== sf) return false;
     if (hideApplied && d.applied) return false;
     if (hideDismissed && (d.status === 'dismissed' || d.status === 'hidden')) return false;
+    if (hideNoMatch && d.match === '0') return false;
     return true;
   });
   const pass = new Set(filteredRows);
