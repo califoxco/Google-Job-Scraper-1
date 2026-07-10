@@ -118,10 +118,12 @@ engineers, "Careers at X" portal pages. After each scrape, unclassified leads
 are sent (in batches, titles only) to a local Ollama model, which judges
 whether each title matches the roles you're hunting — defined as the **first
 keyword of every search set** (e.g. *Software Engineer*, *Full Stack*,
-*Frontend*). Non-matching jobs get a red `✗ match` pill and are hidden behind
-the default-on **hide poor matches** toggle in both the tracker and the
-assistant view. In the admin view, clicking the pill overrides a false
-negative.
+*Frontend*). Individual-contributor variants match (junior/senior, SWE/SDE,
+"Developer"); management-track (Engineering Manager, Director, VP) and
+Staff/Principal-level positions don't. Non-matching jobs get a red `✗ match`
+pill and are hidden behind the default-on **hide poor matches** toggle in
+both the tracker and the assistant view. In the admin view, clicking the pill
+overrides a false negative.
 
 Setup: install [Ollama](https://ollama.com), pull a model
 (`ollama pull qwen2.5:14b` works well), and make sure the **LLM title
@@ -132,9 +134,11 @@ existing backlog in one go:
 python -m jobscrape.matcher
 ```
 
-If Ollama is down, scrapes still work — jobs simply stay unclassified and are
-retried on the next run. Disable the feature entirely with the UI toggle or
-`"llm_match_enabled": false`.
+If Ollama is unreachable, a deliberately lenient string-rule fallback takes
+over so leads still get triaged: it only filters out titles containing
+staff/director/manager and keeps everything else. Transient errors (Ollama up
+but a call failed) leave rows unclassified for retry on the next run. Disable
+the feature entirely with the UI toggle or `"llm_match_enabled": false`.
 
 ## Assistant mode (delegate your applications)
 

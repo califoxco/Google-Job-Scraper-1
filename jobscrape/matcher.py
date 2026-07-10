@@ -6,9 +6,11 @@ the *first keyword of each search set* (e.g. "Software Engineer", "Full
 Stack", "Frontend"). Non-matching jobs get ``title_match = 0`` and are hidden
 by default in the tracker and assistant views (a toggle reveals them).
 
-Runs fully locally against Ollama — no API key, no cost. If Ollama is down
-or slow, jobs simply stay unclassified (``title_match`` NULL) and are retried
-on the next scrape run.
+Runs fully locally against Ollama — no API key, no cost. If Ollama is
+unreachable, a deliberately lenient string-rule fallback classifies instead:
+it only filters out staff/director/manager positions and keeps everything
+else. Transient per-batch errors (Ollama up but a call failed) leave rows
+unclassified (``title_match`` NULL) so the LLM retries them next run.
 """
 
 from __future__ import annotations
@@ -57,15 +59,41 @@ def _prompt(batch: list[dict], wanted: list[str]) -> str:
     lines = "\n".join(f"{j['id']}. {j.get('title') or j.get('url') or ''}" for j in batch)
     return (
         "You are filtering job leads for a job seeker.\n"
-        f"The seeker wants roles matching any of these titles: {', '.join(wanted)}.\n"
-        "A job MATCHES if its title is that kind of role (including seniority "
-        "variants, common abbreviations like SWE/SDE, and equivalent phrasings "
-        "like 'Developer' for 'Engineer'). It does NOT match if it is a "
-        "different profession (sales, accounting, mechanical, marketing, "
-        "recruiting, etc).\n\n"
+        f"The seeker wants individual-contributor roles matching any of these "
+        f"titles: {', '.join(wanted)}.\n"
+        "A job MATCHES if its title is that kind of individual-contributor "
+        "role, including junior/mid/senior variants, common abbreviations "
+        "like SWE/SDE, and equivalent phrasings like 'Developer' for "
+        "'Engineer'.\n"
+        "It does NOT match if it is:\n"
+        "- a different profession (sales, accounting, mechanical, marketing, "
+        "recruiting, design, etc),\n"
+        "- a management-track role (Engineering Manager, Director, VP, Head "
+        "of, Chief ...), or\n"
+        "- a Staff/Principal-level or above position.\n"
+        "Note: 'Founding Engineer' is a hands-on individual-contributor role "
+        "and MATCHES.\n\n"
         f"Classify each job:\n{lines}\n\n"
         "Return JSON with a result for every id."
     )
+
+
+# Deliberately lenient fallback for when Ollama is unreachable: keep every
+# title except obvious leadership postings.
+FALLBACK_EXCLUDE = ("staff", "director", "manager")
+
+
+def _fallback_classify(title: str) -> bool:
+    t = (title or "").lower()
+    return not any(word in t for word in FALLBACK_EXCLUDE)
+
+
+def _ollama_up(base_url: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{base_url.rstrip('/')}/api/tags", timeout=5):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _classify_batch(batch: list[dict], wanted: list[str], base_url: str, model: str) -> dict[int, bool]:
@@ -103,6 +131,21 @@ def run_matching(store: Storage, cfg: dict, progress=None) -> dict:
 
     base_url = cfg.get("ollama_url", "http://127.0.0.1:11434")
     model = cfg.get("ollama_model", "qwen2.5:14b")
+
+    if not _ollama_up(base_url):
+        # LLM unavailable: lenient string rules so leads still get triaged.
+        log(
+            f"[match] Ollama unreachable at {base_url} — falling back to "
+            f"string rules (filter out: {', '.join(FALLBACK_EXCLUDE)})"
+        )
+        matched = 0
+        for j in jobs:
+            verdict = _fallback_classify(j.get("title") or j.get("url") or "")
+            store.set_title_match(j["id"], verdict)
+            matched += int(verdict)
+        log(f"[match] fallback done: {matched}/{len(jobs)} kept")
+        return {"checked": len(jobs), "matched": matched, "engine": "fallback"}
+
     log(f"[match] {len(jobs)} titles -> {model} (wanted: {', '.join(wanted)})")
 
     checked = matched = failed = 0
@@ -128,7 +171,7 @@ def run_matching(store: Storage, cfg: dict, progress=None) -> dict:
         f"[match] done: {matched}/{checked} match your titles"
         + (f" ({failed} left unclassified)" if failed else "")
     )
-    return {"checked": checked, "matched": matched, "failed": failed}
+    return {"checked": checked, "matched": matched, "failed": failed, "engine": "ollama"}
 
 
 if __name__ == "__main__":
