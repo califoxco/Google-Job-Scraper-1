@@ -189,6 +189,33 @@ the tunnel, printing and clipboard-copying the assistant link. Set
 `ngrok_domain` (and optionally `ngrok_authtoken`) in `config.json` to use your
 reserved domain.
 
+## Fan-out applying with Simplify (autoapply)
+
+`autoapply/` opens N job URLs as N tabs in one new Chrome window and clicks
+the [Simplify](https://simplify.jobs) extension's **Start Application** button
+on every tab, so Simplify autofills while you make coffee. You still review
+and submit each application yourself.
+
+Simplify's button lives in Chrome's **side panel** — a `chrome-extension://`
+page that no in-page script, helper extension, or DevTools-protocol trick can
+reach on a default profile. So this tool does it the honest way: real
+mouse/keyboard at screen coordinates you calibrate once, with generous waits
+and a safety guard that aborts the moment Chrome isn't the foreground window.
+
+```powershell
+autoapply\autoapply.cmd -Calibrate            # one-time: capture 3 positions
+autoapply\autoapply.cmd -DryRun -FromDb 2     # hovers everything, clicks nothing
+autoapply\autoapply.cmd -FromDb 5             # next 5 new+matched leads from jobs.db
+autoapply\autoapply.cmd <url> <url> ...       # or explicit URLs / -File urls.txt
+```
+
+Tips: keep the window maximized (runs enforce this — calibrate maximized too);
+optionally assign Simplify a shortcut at `chrome://extensions/shortcuts` and
+calibrate with `-Shortcut "^+y"` so the panel opens via keyboard instead of an
+icon click; if your side panel closes when switching tabs, set
+`"PanelStaysOpen": false` in `autoapply/autoapply.config.json`. Hands off the
+mouse during a run.
+
 ## Run the scraper headlessly
 
 ```powershell

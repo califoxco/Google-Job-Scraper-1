@@ -13,3 +13,6 @@ results/
 
 # Your local config (seeded from config.example.json by the UI)
 config.json
+
+# Per-machine screen coordinates for autoapply
+autoapply/autoapply.config.json
