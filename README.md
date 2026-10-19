@@ -189,6 +189,28 @@ the tunnel, printing and clipboard-copying the assistant link. Set
 `ngrok_domain` (and optionally `ngrok_authtoken`) in `config.json` to use your
 reserved domain.
 
+## Scraping Simplify's job search
+
+Besides Google, the scraper can pull leads straight from
+[Simplify's job search](https://simplify.jobs/jobs) — no login needed. Their
+search runs on a public Typesense cluster; `jobscrape/simplify_search.py`
+pages through your filtered search, resolves each posting's
+`simplify.jobs/jobs/click/<id>` redirect to the **real external application
+URL** (Greenhouse/Lever/Ashby/...), strips the iframe + tracking params, and
+upserts into the same jobs table — so dedupe, LLM matching, the tracker, and
+autoapply all work on these leads unchanged.
+
+Configure in `config.json`: `simplify_filter` is a Typesense `filter_by`
+string copied verbatim from the website's own search requests (open DevTools
+on simplify.jobs/jobs with your filters set and copy it from the
+`multi_search` call); `__SINCE__` is replaced with the epoch for
+`simplify_posted_within_days` ago. Runs automatically as part of every
+scrape, or standalone:
+
+```powershell
+python -m jobscrape.simplify_search
+```
+
 ## Fan-out applying with Simplify (autoapply)
 
 `autoapply/` batch-triggers the [Simplify](https://simplify.jobs) extension's

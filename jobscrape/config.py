@@ -162,6 +162,30 @@ DEFAULT_CONFIG = {
     "llm_match_enabled": True,
     "ollama_url": "http://127.0.0.1:11434",
     "ollama_model": "qwen2.5:14b",
+    # Simplify job-search scraping (see simplify_search.py). The filter is a
+    # Typesense filter_by string copied from simplify.jobs' own search
+    # requests; __SINCE__ becomes the epoch N days ago. The API key is the
+    # public search-only key Simplify ships in its frontend.
+    "simplify_search_enabled": True,
+    "simplify_posted_within_days": 7,
+    "simplify_max_pages": 20,
+    "simplify_filter": (
+        "type:=[`Full-Time`] && experience_level:=[`Mid Level`, `Senior`] && "
+        "functions:=[`Backend Engineering`, `Frontend Engineering`, "
+        "`Full-Stack Engineering`, `Software Engineering`] && "
+        "(min_salary:>=180000 && salary_period:=4) && "
+        "updated_date:>=__SINCE__ && "
+        "(geolocations:(38.045138, -122.521992, 38.045138, -121.767631, "
+        "37.177517, -121.767631, 37.177517, -122.521992) || "
+        "locations:=[`Remote in USA`])"
+    ),
+    "simplify_typesense_key": (
+        "SWF1ODFZbzBkcVlVdnVwT2FqUE5EZ3JpSk5hVmdpUHg1SklXWEdGbHZVRT1POHJieyJl"
+        "eGNsdWRlX2ZpZWxkcyI6ImNvbXBhbnlfdXJsLGNhdGVnb3JpZXMsYWRkaXRpb25hbF9y"
+        "ZXF1aXJlbWVudHMsY291bnRyaWVzLGRlZ3JlZXMsZ2VvbG9jYXRpb25zLGluZHVzdHJp"
+        "ZXMsaXNfc2ltcGxlX2FwcGxpY2F0aW9uLGpvYl9saXN0cyxsZWFkZXJzaGlwX3R5cGUs"
+        "c2VjdXJpdHlfY2xlYXJhbmNlLHNraWxscyx1cmwifQ=="
+    ),
 }
 
 

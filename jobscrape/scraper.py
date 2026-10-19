@@ -18,6 +18,7 @@ from . import scrapingbee
 from .config import PROJECT_ROOT, get_scrapingbee_key, resolve_db_path
 from .matcher import run_matching
 from .query import build_all_urls
+from .simplify_search import run_simplify_search
 from .storage import Storage
 
 PROFILE_DIR = PROJECT_ROOT / ".browser-profile"
@@ -247,6 +248,14 @@ def run_scrape(cfg: dict, progress=None) -> dict:
         total_found, total_new, blocked = _run_playwright(
             cfg, targets, store, log, max_results
         )
+
+    # Pull leads from Simplify's job search too (direct ATS URLs, no login).
+    try:
+        simplify_summary = run_simplify_search(store, cfg, progress=log)
+        total_found += simplify_summary.get("found", 0)
+        total_new += simplify_summary.get("new", 0)
+    except Exception as e:  # noqa: BLE001
+        log(f"[simplify] skipped: {e}")
 
     # Judge new leads' titles against the wanted roles (local LLM via Ollama).
     # Never let matching break a scrape — unclassified rows retry next run.
