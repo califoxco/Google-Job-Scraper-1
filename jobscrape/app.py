@@ -66,7 +66,9 @@ def _pick_autoapply_urls(count: int) -> list[str]:
     return mod.pick(count)
 
 
-def _bg_autoapply(count: int = 10) -> None:
+def _bg_autoapply(count: int = 5) -> None:
+    # Default 5: ten simultaneous ATS tabs (+ Simplify + a resident LLM) OOMs
+    # Chrome's oldest background renderers ("Aw, Snap!") and loses their fills.
     """Run the CDP autoapply batch as a subprocess, streaming its output."""
     AUTOAPPLY_STATE.update(running=True, log=[], exit=None, urls=[])
     try:
@@ -292,8 +294,10 @@ def run_status():
 def autoapply():
     if AUTOAPPLY_STATE["running"]:
         return jsonify(ok=False, error="An autoapply batch is already running."), 409
-    threading.Thread(target=_bg_autoapply, daemon=True).start()
-    return jsonify(ok=True)
+    data = request.get_json(force=True, silent=True) or {}
+    count = max(1, min(10, int(data.get("count", 5))))
+    threading.Thread(target=_bg_autoapply, args=(count,), daemon=True).start()
+    return jsonify(ok=True, count=count)
 
 
 @app.get("/autoapply-status")
