@@ -223,8 +223,12 @@ if ($DryRun) { Write-Host "  DRY RUN - cursor will move, nothing will be clicked
 Write-Host ("  {0} job(s). HANDS OFF the mouse/keyboard until done." -f $urlList.Count) -ForegroundColor Cyan
 Start-Sleep -Seconds 2
 
-Open-JobsWindow $urlList
-Start-Sleep -Seconds 3
+# Tab switching via synthesized Ctrl+Tab is unreliable against Chrome, so we
+# never switch tabs: each URL is handed to Chrome one at a time. Chrome adds
+# it as a new tab in the active window AND focuses it itself, so the job tab
+# we're about to click on is always the active one. End state is the same:
+# one window, N tabs.
+Open-JobsWindow @($urlList[0])
 
 function Open-Panel([object]$cfg, [bool]$dry) {
     if ($dry) { Move-CursorTo $cfg.IconX $cfg.IconY; Start-Sleep -Seconds 1; return }
@@ -235,24 +239,23 @@ function Open-Panel([object]$cfg, [bool]$dry) {
     }
 }
 
+$chromeExe = Find-Chrome
 $done = 0
 for ($i = 0; $i -lt $urlList.Count; $i++) {
     $label = "[{0}/{1}]" -f ($i + 1), $urlList.Count
 
-    # Select the tab: Ctrl+1 for the first, Ctrl+Tab to advance after that.
-    if ($i -eq 0) { Send-Keys '^1' "select tab 1" } else { Send-Keys '^{TAB}' "next tab" }
+    if ($i -gt 0) {
+        # New tab in the active (our) window; Chrome focuses it on creation.
+        Assert-ChromeForeground "open next job tab"
+        Start-Process -FilePath $chromeExe -ArgumentList @($urlList[$i])
+    }
 
     Write-Host ("  {0} loading ({1}s): {2}" -f $label, $LoadWaitSec, $urlList[$i])
     Start-Sleep -Seconds $LoadWaitSec
 
-    # Make sure the Simplify panel is open (first tab always; later tabs only
-    # if it doesn't persist). Opening is a toggle, so don't re-send when open.
-    if (($i -eq 0) -or (-not [bool]$cfg.PanelStaysOpen)) {
-        Open-Panel $cfg $DryRun
-        Start-Sleep -Seconds $PanelWaitSec
-    } else {
-        Start-Sleep -Seconds 2   # give the panel a beat to re-detect the new tab's job
-    }
+    # Simplify's side panel is per-tab: open it on this tab.
+    Open-Panel $cfg $DryRun
+    Start-Sleep -Seconds $PanelWaitSec
 
     if ($DryRun) {
         Move-CursorTo $cfg.ButtonX $cfg.ButtonY
@@ -263,10 +266,6 @@ for ($i = 0; $i -lt $urlList.Count; $i++) {
         Write-Host ("  {0} clicked Start Application" -f $label) -ForegroundColor Green
         Start-Sleep -Seconds 2
     }
-
-    # Hand focus back to the page so Ctrl+Tab is handled by the tab strip.
-    if ($DryRun) { Move-CursorTo $cfg.NeutralX $cfg.NeutralY } else { Invoke-ClickAt $cfg.NeutralX $cfg.NeutralY "neutral page spot" }
-    Start-Sleep -Milliseconds 600
     $done++
 }
 
