@@ -706,13 +706,8 @@ document.querySelectorAll('#leads tbody tr').forEach(tr => {
   if (tr.dataset.status === 'dismissed') tr.classList.add('dismissed-row');
 });
 if (document.getElementById('search')) applyFilters();
-// restore last batch's red outlines (and resume its log if still running)
-if (document.getElementById('leads')) {
-  fetch('/autoapply-status').then(r => r.json()).then(st => {
-    if (st.urls && st.urls.length) flagAutoapplyRows(st.urls);
-    if (st.running) { document.getElementById('autoapplyBtn').disabled = true; pollAutoapply(); }
-  }).catch(() => {});
-}
+// Note: auto-apply red outlines are a temporary in-page highlight only —
+// a refresh clears them (click the button again mid-run to re-attach).
 </script>
 </body>
 </html>
