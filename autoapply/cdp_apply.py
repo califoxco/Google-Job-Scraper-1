@@ -41,7 +41,9 @@ REPO = Path(__file__).resolve().parent.parent
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
 SETTLE_SEC = 12   # post-load wait: Simplify job detection + resume scoring (~8s)
-FILL_WAIT = (6, 6, 8)  # verification polls after dispatch
+DWELL_SEC = 40    # keep the tab focused this long after Start Application -
+                  # Simplify keeps working (uploads, questions) well past the
+                  # first filled fields, and backgrounding the tab throttles it
 
 
 class CDP:
@@ -235,7 +237,7 @@ def read_filled_fields(cdp: CDP, tab_sid: str, pre_iframes: set[str]) -> list[di
     return filled
 
 
-def process(cdp: CDP, sw_sid: str, url: str, verbose: bool = False) -> tuple[str, list[dict]]:
+def process(cdp: CDP, sw_sid: str, url: str, verbose: bool = False, dwell: int = DWELL_SEC) -> tuple[str, list[dict]]:
     def log(m):
         if verbose:
             print(f"    {m}")
@@ -256,14 +258,18 @@ def process(cdp: CDP, sw_sid: str, url: str, verbose: bool = False) -> tuple[str
     if form_state == "clicked-apply":
         time.sleep(5)  # form render + Simplify re-detection
     dispatch_autofill(cdp, sw_sid, tab_id)
-    log("trigger-autofill dispatched")
+    log(f"trigger-autofill dispatched; dwelling {dwell}s so Simplify can finish")
 
+    # Fixed dwell: the tab must stay focused the whole time, even after the
+    # first fields appear — moving on early throttles the still-filling page.
     fields: list[dict] = []
-    for w in FILL_WAIT:
-        time.sleep(w)
+    deadline = time.time() + dwell
+    while time.time() < deadline:
+        time.sleep(min(5, max(0.5, deadline - time.time())))
+        if not fields:
+            fields = read_filled_fields(cdp, tab_sid, pre_iframes)
+    if not fields:
         fields = read_filled_fields(cdp, tab_sid, pre_iframes)
-        if fields:
-            break
     status = "filled" if fields else "no-fill"
     log(f"{status}: {json.dumps(fields)[:200]}")
     return status, fields
@@ -281,6 +287,11 @@ def main() -> int:
         return 1
     mode, rest = args[0], args[1:]
 
+    dwell = DWELL_SEC
+    if "--dwell" in rest:
+        i = rest.index("--dwell")
+        dwell = int(rest[i + 1])
+        rest = rest[:i] + rest[i + 2:]
     urls: list[str] = []
     if "--from-db" in rest:
         i = rest.index("--from-db")
@@ -296,7 +307,7 @@ def main() -> int:
 
     if mode == "probe":
         print(f"PROBE: {urls[0]}")
-        status, fields = process(cdp, sw_sid, urls[0], verbose=True)
+        status, fields = process(cdp, sw_sid, urls[0], verbose=True, dwell=dwell)
         print(f"PROBE RESULT: {status}")
         return 0 if status == "filled" else 2
 
@@ -304,7 +315,7 @@ def main() -> int:
     ok = 0
     for n, url in enumerate(urls, 1):
         try:
-            status, fields = process(cdp, sw_sid, url)
+            status, fields = process(cdp, sw_sid, url, dwell=dwell)
         except Exception as e:  # noqa: BLE001 - keep the batch going
             status, fields = f"error: {str(e)[:140]}", []
         sample = ", ".join(f"{f['n']}={f['v']}" for f in fields[:2])
