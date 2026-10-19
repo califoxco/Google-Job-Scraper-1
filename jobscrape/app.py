@@ -50,18 +50,37 @@ app.permanent_session_lifetime = timedelta(days=30)
 RUN_STATE: dict = {"running": False, "log": [], "summary": None, "error": None}
 
 # State for the background autoapply batch (autoapply/cdp_apply.py).
-AUTOAPPLY_STATE: dict = {"running": False, "log": [], "exit": None}
+# "urls" records exactly which leads the batch processed, so the tracker can
+# outline those rows until their status is updated.
+AUTOAPPLY_STATE: dict = {"running": False, "log": [], "exit": None, "urls": []}
+
+
+def _pick_autoapply_urls(count: int) -> list[str]:
+    from importlib import util as _ilu
+
+    spec = _ilu.spec_from_file_location(
+        "pick_urls", PROJECT_ROOT / "autoapply" / "pick_urls.py"
+    )
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod.pick(count)
 
 
 def _bg_autoapply(count: int = 10) -> None:
     """Run the CDP autoapply batch as a subprocess, streaming its output."""
-    AUTOAPPLY_STATE.update(running=True, log=[], exit=None)
+    AUTOAPPLY_STATE.update(running=True, log=[], exit=None, urls=[])
     try:
+        urls = _pick_autoapply_urls(count)
+        AUTOAPPLY_STATE["urls"] = urls
+        if not urls:
+            AUTOAPPLY_STATE["log"].append("no eligible leads to apply to")
+            AUTOAPPLY_STATE["exit"] = 0
+            return
         proc = subprocess.Popen(
             [
                 sys.executable, "-u",
                 str(PROJECT_ROOT / "autoapply" / "cdp_apply.py"),
-                "run", "--from-db", str(count),
+                "run", *urls,
             ],
             cwd=str(PROJECT_ROOT),
             stdout=subprocess.PIPE,

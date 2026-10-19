@@ -97,6 +97,9 @@
   .pill-bad { color: var(--bad); border-color: rgba(248,81,73,.5); }
   .match-pill { cursor: pointer; }
   .match-pill:hover { background: rgba(248,81,73,.12); }
+  /* rows from the last auto-apply batch: needs a status update */
+  tr.aa-flag { outline: 2px solid rgba(248,81,73,.85); outline-offset: -2px; }
+  tr.aa-flag td { background: rgba(248,81,73,.06); }
   tr.applied-row td { opacity: .6; }
   tr.dismissed-row td { opacity: .4; }
   tr.dismissed-row td a { text-decoration: line-through; }
@@ -532,6 +535,17 @@ async function poll() {
   }
 }
 // ---- autoapply batch -------------------------------------------------
+// Outline the rows of the last auto-apply batch until their status changes.
+function flagAutoapplyRows(urls) {
+  const set = new Set(urls || []);
+  document.querySelectorAll('#leads tbody tr').forEach(tr => {
+    const a = tr.querySelector('td a');
+    const needsReview = a && set.has(a.getAttribute('href'))
+      && tr.dataset.status === 'new' && !tr.dataset.applied;
+    tr.classList.toggle('aa-flag', !!needsReview);
+  });
+}
+
 async function runAutoapply() {
   const btn = document.getElementById('autoapplyBtn');
   btn.disabled = true;
@@ -552,13 +566,14 @@ async function pollAutoapply() {
   box.style.display = 'block';
   box.textContent = (st.log || []).join('\n') || 'Working…';
   box.scrollTop = box.scrollHeight;
+  flagAutoapplyRows(st.urls);
   if (st.running) {
     document.getElementById('autoapplyState').textContent = 'Running — hands off the keyboard…';
     setTimeout(pollAutoapply, 1500);
   } else {
     document.getElementById('autoapplyBtn').disabled = false;
     document.getElementById('autoapplyState').textContent =
-      st.exit === 0 ? 'Done — review the filled tabs, submit, then ✓ them here.' : (st.exit === null ? '' : 'Finished with errors — see log.');
+      st.exit === 0 ? 'Done — the red-outlined rows below are this batch: review, submit, then ✓ or ✕ them.' : (st.exit === null ? '' : 'Finished with errors — see log.');
   }
 }
 
@@ -585,6 +600,8 @@ function applyRowState(id, state) {
   const na = tr.querySelector('.na-cb');
   if (na) na.checked = tr.dataset.status === 'dismissed';
   tr.classList.toggle('dismissed-row', tr.dataset.status === 'dismissed');
+  // status updated -> this batch row no longer needs the red reminder
+  if (tr.dataset.status !== 'new' || tr.dataset.applied) tr.classList.remove('aa-flag');
   applyFilters();
 }
 
@@ -689,6 +706,13 @@ document.querySelectorAll('#leads tbody tr').forEach(tr => {
   if (tr.dataset.status === 'dismissed') tr.classList.add('dismissed-row');
 });
 if (document.getElementById('search')) applyFilters();
+// restore last batch's red outlines (and resume its log if still running)
+if (document.getElementById('leads')) {
+  fetch('/autoapply-status').then(r => r.json()).then(st => {
+    if (st.urls && st.urls.length) flagAutoapplyRows(st.urls);
+    if (st.running) { document.getElementById('autoapplyBtn').disabled = true; pollAutoapply(); }
+  }).catch(() => {});
+}
 </script>
 </body>
 </html>
