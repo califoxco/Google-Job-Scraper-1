@@ -167,6 +167,17 @@ DEFAULT_CONFIG = {
     # requests; __SINCE__ becomes the epoch N days ago. The API key is the
     # public search-only key Simplify ships in its frontend.
     "simplify_search_enabled": True,
+    # Paste your simplify.jobs/jobs?... search URL (with all filters set) here
+    # or in the UI; it is parsed into the Typesense filter automatically and
+    # takes precedence over simplify_filter below.
+    "simplify_url": (
+        "https://simplify.jobs/jobs?type=Full-Time&experience_level=Mid+Level"
+        "&experience_level=Senior&functions=Backend+Engineering"
+        "&functions=Frontend+Engineering&functions=Full-Stack+Engineering"
+        "&functions=Software+Engineering&min_salary=180000&posted_within_days=7"
+        "&location=bbox%7E38.045138%2C-122.521992%2C37.177517%2C-121.767631"
+        "%7ESan+Francisco+Bay+Area&location=remote%7ERemote+in+USA"
+    ),
     "simplify_posted_within_days": 7,
     "simplify_max_pages": 20,
     "simplify_filter": (

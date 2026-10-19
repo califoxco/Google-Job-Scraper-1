@@ -46,6 +46,62 @@ ATS_HOSTS = (
 )
 
 
+def filter_from_url(url: str) -> tuple[str, int | None]:
+    """Translate a simplify.jobs/jobs?... search URL into a Typesense
+    filter_by template (__SINCE__ placeholder) — so the config can simply be
+    the URL copied from the browser's address bar.
+
+    Returns (filter_template, posted_within_days or None).
+    """
+    qs = urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True)
+    types: list[str] = []
+    levels: list[str] = []
+    funcs: list[str] = []
+    remote_locs: list[str] = []
+    bboxes: list[str] = []
+    min_salary = None
+    days = None
+    for k, v in qs:
+        if k == "type":
+            types.append(v)
+        elif k == "experience_level":
+            levels.append(v)
+        elif k == "functions":
+            funcs.append(v)
+        elif k == "min_salary":
+            min_salary = int(v)
+        elif k == "posted_within_days":
+            days = int(v)
+        elif k == "location":
+            parts = v.split("~")
+            if parts[0] == "remote":
+                remote_locs.append(parts[1] if len(parts) > 1 else "Remote in USA")
+            elif parts[0] == "bbox" and len(parts) > 1:
+                north, west, south, east = (float(x) for x in parts[1].split(","))
+                bboxes.append(
+                    f"geolocations:({north}, {west}, {north}, {east}, "
+                    f"{south}, {east}, {south}, {west})"
+                )
+
+    def arr(field: str, vals: list[str]) -> str:
+        return field + ":=[" + ", ".join(f"`{v}`" for v in vals) + "]"
+
+    clauses = []
+    if types:
+        clauses.append(arr("type", types))
+    if levels:
+        clauses.append(arr("experience_level", levels))
+    if funcs:
+        clauses.append(arr("functions", funcs))
+    if min_salary:
+        clauses.append(f"(min_salary:>={min_salary} && salary_period:=4)")
+    clauses.append("updated_date:>=__SINCE__")
+    loc_parts = bboxes + ([arr("locations", remote_locs)] if remote_locs else [])
+    if loc_parts:
+        clauses.append("(" + " || ".join(loc_parts) + ")")
+    return " && ".join(clauses), days
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):  # noqa: D102
         return None
@@ -137,8 +193,16 @@ def run_simplify_search(store: Storage, cfg: dict, progress=None) -> dict:
     if not cfg.get("simplify_search_enabled", False):
         return {"found": 0, "new": 0, "skipped": "disabled"}
 
-    since = int(time.time()) - int(cfg.get("simplify_posted_within_days", 7)) * 86400
-    filter_by = cfg["simplify_filter"].replace("__SINCE__", str(since))
+    days = int(cfg.get("simplify_posted_within_days", 7))
+    simplify_url = (cfg.get("simplify_url") or "").strip()
+    if simplify_url:
+        template, url_days = filter_from_url(simplify_url)
+        if url_days:
+            days = url_days
+    else:
+        template = cfg["simplify_filter"]
+    since = int(time.time()) - days * 86400
+    filter_by = template.replace("__SINCE__", str(since))
     max_pages = int(cfg.get("simplify_max_pages", 20))
 
     seen_ids: set[str] = set()

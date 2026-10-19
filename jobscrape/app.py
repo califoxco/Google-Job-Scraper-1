@@ -212,6 +212,10 @@ def save():
     cfg["ollama_model"] = data.get("ollama_model", cfg.get("ollama_model", "")).strip() or cfg.get(
         "ollama_model", "qwen2.5:14b"
     )
+    cfg["simplify_search_enabled"] = bool(
+        data.get("simplify_search_enabled", cfg.get("simplify_search_enabled", True))
+    )
+    cfg["simplify_url"] = data.get("simplify_url", cfg.get("simplify_url", "")).strip()
     save_config(cfg)
     return jsonify(ok=True, config=cfg)
 

@@ -161,6 +161,17 @@
     <small class="hint">Target roles = the first keyword of each search set. Non-matching jobs are hidden behind the "hide poor matches" toggle in the tracker.</small>
   </div>
 
+  <div class="panel">
+    <h2>Simplify job search <span class="muted" style="text-transform:none;letter-spacing:0">— scraped alongside Google on every run</span></h2>
+    <label class="chk" style="margin-bottom:10px">
+      <input type="checkbox" id="simplify_enabled" {% if cfg.simplify_search_enabled %}checked{% endif %}>
+      Pull leads from Simplify's job search (direct ATS application URLs, no login)
+    </label>
+    <label>Search URL — set your filters on <a href="https://simplify.jobs/jobs" target="_blank" rel="noopener" style="color:var(--accent)">simplify.jobs/jobs</a>, then copy the address bar here</label>
+    <input type="text" id="simplify_url" value="{{ cfg.simplify_url }}" placeholder="https://simplify.jobs/jobs?type=Full-Time&...">
+    <small class="hint">Understood filters: type, experience level, functions, min salary, posted-within days, map area, remote. The URL is translated to their search API automatically.</small>
+  </div>
+
   <div class="grid">
     <div class="panel">
       <h2>Freshness</h2>
@@ -433,6 +444,8 @@ function readPayload() {
     llm_match_enabled: document.getElementById('llm_enabled').checked,
     ollama_url: document.getElementById('ollama_url').value.trim(),
     ollama_model: document.getElementById('ollama_model').value.trim(),
+    simplify_search_enabled: document.getElementById('simplify_enabled').checked,
+    simplify_url: document.getElementById('simplify_url').value.trim(),
     headless: document.getElementById('headless').checked,
     max_results_per_query: parseInt(document.getElementById('max_results').value || '30', 10),
     min_delay_seconds: parseFloat(document.getElementById('min_delay').value || '3'),
