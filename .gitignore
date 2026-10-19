@@ -16,3 +16,6 @@ config.json
 
 # Per-machine screen coordinates for autoapply
 autoapply/autoapply.config.json
+
+# Dedicated Chrome profile for autoapply CDP automation (contains Simplify login)
+.autoapply-profile/

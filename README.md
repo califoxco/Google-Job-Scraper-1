@@ -191,31 +191,35 @@ reserved domain.
 
 ## Fan-out applying with Simplify (autoapply)
 
-`autoapply/` opens N job URLs as N tabs in one new Chrome window and clicks
-the [Simplify](https://simplify.jobs) extension's **Start Application** button
-on every tab, so Simplify autofills while you make coffee. You still review
-and submit each application yourself.
+`autoapply/` batch-triggers the [Simplify](https://simplify.jobs) extension's
+autofill across many job tabs, so the forms fill themselves while you make
+coffee. You still review and submit each application yourself.
 
-Simplify's button lives in Chrome's **side panel** — a `chrome-extension://`
-page that no in-page script, helper extension, or DevTools-protocol trick can
-reach on a default profile. So this tool does it the honest way: real
-mouse/keyboard at screen coordinates you calibrate once, with generous waits
-and a safety guard that aborts the moment Chrome isn't the foreground window.
+**How it works** (`cdp_apply.py`): a dedicated Chrome profile runs with the
+DevTools protocol enabled (Chrome blocks CDP on your daily profile, and
+extension UI can't be triggered by page scripts — both by design). The driver
+opens each job in a tab, focuses it via Simplify's own `chrome.windows` API
+(Simplify only fills *visible* pages), reveals the application form if the
+page hides it behind an Apply button, then dispatches Simplify's own
+`trigger-autofill` command handler inside its service worker — byte-identical
+to pressing Simplify's Alt+Shift+F shortcut — and verifies by reading the
+form fields. No synthetic mouse or keyboard anywhere.
+
+One-time setup: run `autoapply\launch_chrome.cmd`, install Simplify Copilot
+in that window and log in. Then:
 
 ```powershell
-autoapply\autoapply.cmd -Calibrate            # one-time: capture 3 positions
-autoapply\autoapply.cmd -DryRun -FromDb 2     # hovers everything, clicks nothing
-autoapply\autoapply.cmd -FromDb 5             # next 5 new+matched leads from jobs.db
-autoapply\autoapply.cmd <url> <url> ...       # or explicit URLs / -File urls.txt
+# single-URL verbose test
+.venv\Scripts\python autoapply\cdp_apply.py probe <url>
+# next 10 new+matched leads from jobs.db (skips login-gated platforms)
+.venv\Scripts\python autoapply\cdp_apply.py run --from-db 10
 ```
 
-Tips: keep the window maximized (runs enforce this — calibrate maximized too);
-optionally assign Simplify a shortcut at `chrome://extensions/shortcuts` and
-calibrate with `-Shortcut "^+y"` so the panel opens via keyboard instead of an
-icon click. Simplify's side panel is per-tab, so the panel is reopened on
-every tab (`"PanelStaysOpen": false`, the default — only set it true if your
-panel genuinely persists across tab switches, since opening is a toggle).
-Hands off the mouse during a run.
+Each job takes ~30s (Simplify needs ~8s to detect + score before it will
+fill). The automation window raises itself per job — watch if you like, but
+don't type during a run. Tabs stay open; review, finish, submit, then tick ✓
+in the tracker. `autoapply.ps1` (calibrated screen-clicking) remains as a
+legacy fallback.
 
 ## Run the scraper headlessly
 
