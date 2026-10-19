@@ -28,7 +28,7 @@ def pick(limit: int) -> list[str]:
         "SELECT url FROM jobs "
         "WHERE status = 'new' AND applied_at IS NULL AND title_match = 1 "
         f"{not_like} "
-        "ORDER BY first_seen DESC LIMIT ?",
+        "ORDER BY first_seen DESC, id DESC LIMIT ?",
         (limit,),
     )
     return [url for (url,) in rows]

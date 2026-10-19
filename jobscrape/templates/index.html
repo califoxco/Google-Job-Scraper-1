@@ -535,15 +535,29 @@ async function poll() {
   }
 }
 // ---- autoapply batch -------------------------------------------------
-// Outline the rows of the last auto-apply batch until their status changes.
+// Outline the rows of the current auto-apply batch until their status
+// changes, and surface them contiguously at the top of the table in the
+// same order the tabs were opened (the picker skips rows the table shows —
+// excluded platforms, poor matches — so in place they'd look gappy).
 function flagAutoapplyRows(urls) {
   const set = new Set(urls || []);
+  const tbody = document.querySelector('#leads tbody');
+  const byUrl = new Map();
   document.querySelectorAll('#leads tbody tr').forEach(tr => {
     const a = tr.querySelector('td a');
-    const needsReview = a && set.has(a.getAttribute('href'))
+    const href = a && a.getAttribute('href');
+    const needsReview = href && set.has(href)
       && tr.dataset.status === 'new' && !tr.dataset.applied;
     tr.classList.toggle('aa-flag', !!needsReview);
+    if (needsReview) byUrl.set(href, tr);
   });
+  if (byUrl.size && tbody) {
+    [...(urls || [])].reverse().forEach(u => {
+      const tr = byUrl.get(u);
+      if (tr) tbody.prepend(tr);
+    });
+    applyFilters();
+  }
 }
 
 async function runAutoapply() {
