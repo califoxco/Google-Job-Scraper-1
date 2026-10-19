@@ -250,6 +250,11 @@
   <!-- TRACKER -->
   <div class="panel">
     <h2>Leads &amp; application tracker</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button class="primary" id="autoapplyBtn" onclick="runAutoapply()">⚡ Auto-apply top 10 (Simplify)</button>
+      <span class="muted" id="autoapplyState"></span>
+    </div>
+    <div class="runbox" id="autoapplyBox"></div>
     {% if jobs %}
     <div class="tracker-controls">
       <input type="text" id="search" placeholder="search title / company / notes…" oninput="applyFilters()">
@@ -526,6 +531,37 @@ async function poll() {
     }
   }
 }
+// ---- autoapply batch -------------------------------------------------
+async function runAutoapply() {
+  const btn = document.getElementById('autoapplyBtn');
+  btn.disabled = true;
+  const res = await fetch('/autoapply', { method: 'POST' });
+  if (res.status === 409) {
+    document.getElementById('autoapplyState').textContent = 'Already running…';
+    pollAutoapply();
+    return;
+  }
+  const box = document.getElementById('autoapplyBox');
+  box.style.display = 'block';
+  box.textContent = "Starting… the automation Chrome window will take focus — don't type until it finishes.";
+  pollAutoapply();
+}
+async function pollAutoapply() {
+  const st = await (await fetch('/autoapply-status')).json();
+  const box = document.getElementById('autoapplyBox');
+  box.style.display = 'block';
+  box.textContent = (st.log || []).join('\n') || 'Working…';
+  box.scrollTop = box.scrollHeight;
+  if (st.running) {
+    document.getElementById('autoapplyState').textContent = 'Running — hands off the keyboard…';
+    setTimeout(pollAutoapply, 1500);
+  } else {
+    document.getElementById('autoapplyBtn').disabled = false;
+    document.getElementById('autoapplyState').textContent =
+      st.exit === 0 ? 'Done — review the filled tabs, submit, then ✓ them here.' : (st.exit === null ? '' : 'Finished with errors — see log.');
+  }
+}
+
 // ---- tracker: edit + filter + sort -----------------------------------
 function rowFor(id) { return document.querySelector(`tr[data-id="${id}"]`); }
 

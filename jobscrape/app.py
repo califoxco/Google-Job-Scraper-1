@@ -12,6 +12,8 @@ Auth is deliberately lightweight (shared passwords in config.json):
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 from datetime import date, timedelta
 from functools import wraps
@@ -30,6 +32,7 @@ from flask import (
 from .config import (
     ATS_PRESETS,
     FRESHNESS_OPTIONS,
+    PROJECT_ROOT,
     load_config,
     resolve_db_path,
     save_config,
@@ -45,6 +48,36 @@ app.permanent_session_lifetime = timedelta(days=30)
 
 # In-memory state for the background "Run now" job (single-user local tool).
 RUN_STATE: dict = {"running": False, "log": [], "summary": None, "error": None}
+
+# State for the background autoapply batch (autoapply/cdp_apply.py).
+AUTOAPPLY_STATE: dict = {"running": False, "log": [], "exit": None}
+
+
+def _bg_autoapply(count: int = 10) -> None:
+    """Run the CDP autoapply batch as a subprocess, streaming its output."""
+    AUTOAPPLY_STATE.update(running=True, log=[], exit=None)
+    try:
+        proc = subprocess.Popen(
+            [
+                sys.executable, "-u",
+                str(PROJECT_ROOT / "autoapply" / "cdp_apply.py"),
+                "run", "--from-db", str(count),
+            ],
+            cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        for line in proc.stdout:  # type: ignore[union-attr]
+            AUTOAPPLY_STATE["log"].append(line.rstrip())
+        AUTOAPPLY_STATE["exit"] = proc.wait()
+    except Exception as e:  # noqa: BLE001
+        AUTOAPPLY_STATE["log"].append(f"error: {e}")
+        AUTOAPPLY_STATE["exit"] = -1
+    finally:
+        AUTOAPPLY_STATE["running"] = False
 
 
 def _bg_run_capture() -> None:
@@ -233,6 +266,21 @@ def run():
 @require_role("admin")
 def run_status():
     return jsonify(RUN_STATE)
+
+
+@app.post("/autoapply")
+@require_role("admin")
+def autoapply():
+    if AUTOAPPLY_STATE["running"]:
+        return jsonify(ok=False, error="An autoapply batch is already running."), 409
+    threading.Thread(target=_bg_autoapply, daemon=True).start()
+    return jsonify(ok=True)
+
+
+@app.get("/autoapply-status")
+@require_role("admin")
+def autoapply_status():
+    return jsonify(AUTOAPPLY_STATE)
 
 
 # --- tracker edits (admin + VA; who applied is recorded for billing) ------------

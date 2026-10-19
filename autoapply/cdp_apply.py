@@ -212,7 +212,7 @@ ENSURE_FORM = """(() => {
 FIELD_PROBE = (
     "JSON.stringify([...document.querySelectorAll("
     "'input[type=text],input[type=email],input[type=tel],input:not([type])')]"
-    ".filter(i => i.value && i.value.trim())"
+    ".filter(i => i.value && i.value.trim() && !i.value.startsWith('http'))"  # share-link widgets aren't fills
     ".slice(0, 6).map(i => ({n: (i.name || i.id || '?').slice(0, 30), v: i.value.slice(0, 30)})))"
 )
 
