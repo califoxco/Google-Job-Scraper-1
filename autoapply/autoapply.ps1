@@ -190,7 +190,7 @@ if ($Calibrate) {
         ButtonX        = $btn.X;   ButtonY  = $btn.Y
         NeutralX       = $neut.X;  NeutralY = $neut.Y
         IconShortcut   = $Shortcut          # SendKeys combo; '' = click the icon instead
-        PanelStaysOpen = $true              # side panel persists across tabs; set false if yours closes
+        PanelStaysOpen = $false             # Simplify's panel is per-tab: reopen it on every tab (verified)
         LoadWaitSec    = 12
         PanelWaitSec   = 5
     }

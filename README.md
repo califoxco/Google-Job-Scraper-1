@@ -212,9 +212,10 @@ autoapply\autoapply.cmd <url> <url> ...       # or explicit URLs / -File urls.tx
 Tips: keep the window maximized (runs enforce this — calibrate maximized too);
 optionally assign Simplify a shortcut at `chrome://extensions/shortcuts` and
 calibrate with `-Shortcut "^+y"` so the panel opens via keyboard instead of an
-icon click; if your side panel closes when switching tabs, set
-`"PanelStaysOpen": false` in `autoapply/autoapply.config.json`. Hands off the
-mouse during a run.
+icon click. Simplify's side panel is per-tab, so the panel is reopened on
+every tab (`"PanelStaysOpen": false`, the default — only set it true if your
+panel genuinely persists across tab switches, since opening is a toggle).
+Hands off the mouse during a run.
 
 ## Run the scraper headlessly
 
