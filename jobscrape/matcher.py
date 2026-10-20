@@ -56,24 +56,31 @@ def wanted_titles(cfg: dict) -> list[str]:
 
 
 def _prompt(batch: list[dict], wanted: list[str]) -> str:
-    lines = "\n".join(f"{j['id']}. {j.get('title') or j.get('url') or ''}" for j in batch)
+    lines = "\n".join(
+        f"{j['id']}. {j.get('title') or '(no title)'} || {(j.get('url') or '')[:100]}"
+        for j in batch
+    )
     return (
-        "You are filtering job leads for a job seeker.\n"
+        "You are filtering job leads for a job seeker. Each lead is a page "
+        "title followed by || and its URL.\n"
         f"The seeker wants individual-contributor roles matching any of these "
         f"titles: {', '.join(wanted)}.\n"
-        "A job MATCHES if its title is that kind of individual-contributor "
-        "role, including junior/mid/senior variants, common abbreviations "
-        "like SWE/SDE, and equivalent phrasings like 'Developer' for "
-        "'Engineer'.\n"
-        "It does NOT match if it is:\n"
-        "- a different profession (sales, accounting, mechanical, marketing, "
-        "recruiting, design, etc),\n"
-        "- a management-track role (Engineering Manager, Director, VP, Head "
-        "of, Chief ...), or\n"
-        "- a Staff/Principal-level or above position.\n"
-        "Note: 'Founding Engineer' is a hands-on individual-contributor role "
-        "and MATCHES.\n\n"
-        f"Classify each job:\n{lines}\n\n"
+        "A lead MATCHES only if BOTH hold:\n"
+        "1. It is ONE specific job posting / application page - judge from "
+        "title and URL together. It is NOT a match if it looks like a job "
+        "search or listing page, an aggregator, or a generic careers landing "
+        "page (clues: titles like 'X jobs near me', '25 Software Engineer "
+        "Jobs in San Francisco', 'Careers | Company', 'Jobs at Company', "
+        "'Current Opportunities'; URLs with /search, /jobs-near-me, list-like "
+        "paths).\n"
+        "2. The role is that kind of individual-contributor position, "
+        "including junior/mid/senior variants, abbreviations like SWE/SDE, "
+        "and 'Developer' for 'Engineer' - but NOT a different profession "
+        "(sales, accounting, mechanical, marketing, recruiting, design, "
+        "etc), NOT a management-track role (Engineering Manager, Director, "
+        "VP, Head of, Chief ...), and NOT a Staff/Principal-level or above "
+        "position. ('Founding Engineer' is hands-on IC and MATCHES.)\n\n"
+        f"Classify each lead:\n{lines}\n\n"
         "Return JSON with a result for every id."
     )
 
@@ -94,6 +101,39 @@ def _ollama_up(base_url: str) -> bool:
             return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def _ensure_ollama(base_url: str, log) -> bool:
+    """If Ollama isn't answering, try to start it (scheduled overnight runs
+    shouldn't depend on the app having been opened by hand)."""
+    if _ollama_up(base_url):
+        return True
+    import os
+    import shutil
+    import subprocess
+
+    exe = shutil.which("ollama") or os.path.expandvars(
+        r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+    )
+    if not os.path.exists(exe):
+        return False
+    log("[match] Ollama not running - starting it...")
+    try:
+        subprocess.Popen(
+            [exe, "serve"],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"[match] could not start Ollama: {e}")
+        return False
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        time.sleep(2)
+        if _ollama_up(base_url):
+            return True
+    return False
 
 
 def _classify_batch(batch: list[dict], wanted: list[str], base_url: str, model: str) -> dict[int, bool]:
@@ -132,19 +172,23 @@ def run_matching(store: Storage, cfg: dict, progress=None) -> dict:
     base_url = cfg.get("ollama_url", "http://127.0.0.1:11434")
     model = cfg.get("ollama_model", "qwen2.5:14b")
 
-    if not _ollama_up(base_url):
-        # LLM unavailable: lenient string rules so leads still get triaged.
+    if not _ensure_ollama(base_url, log):
+        # LLM unavailable: lenient string rules, but PROVISIONAL - only the
+        # obvious exclusions are written; everything else stays unclassified
+        # so the LLM re-judges those rows on the next run. (Permanent lenient
+        # verdicts previously let listing-page junk through for good.)
         log(
-            f"[match] Ollama unreachable at {base_url} — falling back to "
-            f"string rules (filter out: {', '.join(FALLBACK_EXCLUDE)})"
+            f"[match] Ollama unreachable at {base_url} - fallback string "
+            f"rules hide {'/'.join(FALLBACK_EXCLUDE)} titles; the rest wait "
+            "for the LLM"
         )
-        matched = 0
+        hidden = 0
         for j in jobs:
-            verdict = _fallback_classify(j.get("title") or j.get("url") or "")
-            store.set_title_match(j["id"], verdict)
-            matched += int(verdict)
-        log(f"[match] fallback done: {matched}/{len(jobs)} kept")
-        return {"checked": len(jobs), "matched": matched, "engine": "fallback"}
+            if not _fallback_classify(j.get("title") or j.get("url") or ""):
+                store.set_title_match(j["id"], False)
+                hidden += 1
+        log(f"[match] fallback: {hidden}/{len(jobs)} hidden, {len(jobs) - hidden} left unclassified")
+        return {"checked": len(jobs), "matched": 0, "hidden": hidden, "engine": "fallback"}
 
     log(f"[match] {len(jobs)} titles -> {model} (wanted: {', '.join(wanted)})")
 
