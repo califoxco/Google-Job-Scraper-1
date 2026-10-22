@@ -255,10 +255,17 @@ updates the tracker itself.
 - **Success** means a confirmation that *appears after* the click (a
   confirmation URL, or "application submitted / thank you for applying" text
   that wasn't on the page before). The row is marked applied, by `auto`.
+  The form disappearing after the click also counts as success.
 - **Anything else** — no form detected, autofill timeout, missing required
   answers, no confirmation — labels the row **⚠ needs human attention** with
-  the reason (hover the pill). Those rows are pinned to the top of the
-  tracker and are never auto-retried.
+  the reason (hover the pill). Those rows are hidden from the tracker by
+  default and never auto-retried; tick **⚠ needs attention only** to show just
+  them and work through them by hand.
+- **Order:** the bot takes the top rows of the table *as you see it* (current
+  sort, search and filters), skipping applied, dismissed and flagged rows.
+- **Connection loss is never the job's fault:** if the automation Chrome
+  crashes or closes mid-run, the bot relaunches it and retries that job; if
+  it can't recover, it stops and leaves the remaining jobs untouched.
 
 Add `--dry-run` to rehearse the whole flow without clicking Submit.
 

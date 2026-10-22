@@ -272,6 +272,7 @@
       <label class="chk"><input type="checkbox" id="hideApplied" checked onchange="applyFilters()"> hide applied</label>
       <label class="chk"><input type="checkbox" id="hideDismissed" checked onchange="applyFilters()"> hide dismissed</label>
       <label class="chk"><input type="checkbox" id="hideNoMatch" checked onchange="applyFilters()"> hide poor matches</label>
+      <label class="chk" title="Rows the auto-applier couldn't finish are hidden by default. Tick to show ONLY those, to work through them by hand."><input type="checkbox" id="attnOnly" onchange="applyFilters()"> <span style="color:var(--warn)">⚠ needs attention only</span> <span class="muted" id="attnCount"></span></label>
     </div>
     <table id="leads">
       <thead><tr>
@@ -289,6 +290,7 @@
         <tr data-id="{{ j.id }}" data-status="{{ j.status }}"
             data-applied="{{ '1' if j.applied_at else '' }}"
             data-match="{{ '' if j.title_match is none else j.title_match }}"
+            data-attention="{{ '1' if j.attention else '' }}"
             data-title="{{ (j.title or j.url)|lower }}" data-ats="{{ j.ats|lower }}"
             data-notes="{{ (j.notes or '')|lower }}">
           <td><input type="checkbox" class="applied-cb" {% if j.applied_at %}checked{% endif %}
@@ -566,14 +568,28 @@ function setAutoapplyButtons(disabled) {
   document.getElementById('autoapplyBtn').disabled = disabled;
   document.getElementById('autosubmitBtn').disabled = disabled;
 }
+// The bot works on exactly what the table shows, top first: current sort,
+// search and filters - skipping rows already applied, dismissed or flagged.
+function topEligibleIds(n) {
+  return filteredRows
+    .filter(tr => tr.dataset.status === 'new' && !tr.dataset.applied && !tr.dataset.attention)
+    .slice(0, n)
+    .map(tr => tr.dataset.id);
+}
 async function runAutoapply(mode) {
+  const count = mode === 'submit' ? 50 : 5;
+  const ids = topEligibleIds(count);
+  if (!ids.length) {
+    alert('No eligible rows in the current view (new, not applied, not flagged). Adjust the filters and try again.');
+    return;
+  }
   if (mode === 'submit' && !confirm(
-      'Auto-apply will SUBMIT up to 50 real applications, one at a time, with no review.\n\n' +
+      `Auto-apply will SUBMIT up to ${ids.length} real applications - the top ${ids.length} rows of the table as shown - one at a time, with no review.\n\n` +
       'Successes are marked applied; failures get a "needs human attention" label.\nStart?')) return;
   setAutoapplyButtons(true);
   const res = await fetch('/autoapply', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(mode === 'submit' ? { mode: 'submit', count: 50 } : { mode: 'fill', count: 5 }),
+    body: JSON.stringify({ mode, count, ids }),
   });
   if (res.status === 409) {
     document.getElementById('autoapplyState').textContent = 'Already running…';
@@ -667,6 +683,7 @@ function applyFilters() {
   const hideApplied = document.getElementById('hideApplied').checked;
   const hideDismissed = document.getElementById('hideDismissed').checked;
   const hideNoMatch = document.getElementById('hideNoMatch').checked;
+  const attnOnly = document.getElementById('attnOnly').checked;
   const all = [...document.querySelectorAll('#leads tbody tr')];
   filteredRows = all.filter(tr => {
     const d = tr.dataset;
@@ -674,9 +691,13 @@ function applyFilters() {
     if (sf && d.status !== sf) return false;
     if (hideApplied && d.applied) return false;
     if (hideDismissed && (d.status === 'dismissed' || d.status === 'hidden')) return false;
-    if (hideNoMatch && d.match === '0') return false;
+    // Needs-attention rows: hidden by default; the toggle shows ONLY them.
+    if (attnOnly ? !d.attention : d.attention) return false;
+    if (!attnOnly && hideNoMatch && d.match === '0') return false;
     return true;
   });
+  const openAttn = all.filter(tr => tr.dataset.attention && tr.dataset.status === 'new' && !tr.dataset.applied).length;
+  document.getElementById('attnCount').textContent = openAttn ? `(${openAttn})` : '';
   const pass = new Set(filteredRows);
   all.forEach(tr => { if (!pass.has(tr)) tr.style.display = 'none'; });
   currentPage = 1;

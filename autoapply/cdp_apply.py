@@ -289,10 +289,21 @@ def urls_from_db(limit: int) -> list[str]:
 # Simplify renders its in-page panel inside a shadow root, invisible to
 # document.querySelector; CDP's piercing DOM search reaches it.
 
-AUTOFILL_WAIT_SEC = 75     # max wait for the panel to report "Autofill complete!"
+AUTOFILL_WAIT_SEC = 100    # max wait for the panel to finish filling
+FORM_RETRY_AT_SEC = 35     # no panel by then: re-check for a hidden form, re-trigger once
 POST_FILL_BUFFER_SEC = 5   # let uploads/late fields settle before submitting
-CONFIRM_WAIT_SEC = 25      # max wait for a confirmation after clicking Submit
+CONFIRM_WAIT_SEC = 40      # max wait for a confirmation after clicking Submit
 CLOSE_DELAY_SEC = 3        # keep the tab visible briefly before closing it
+
+# Lost connection to the automation Chrome. Never the job's fault: such
+# failures must trigger a reconnect, not a "needs human attention" flag.
+INFRA_ERRORS = (OSError, ConnectionError, websocket.WebSocketException)
+
+VISIBLE_INPUTS_JS = (
+    "[...document.querySelectorAll('input:not([type=hidden]):not([type=checkbox])"
+    ":not([type=radio]):not([type=submit]):not([type=button]), textarea, select')]"
+    ".filter(e => e.offsetParent !== null).length"
+)
 
 REQUIRED_RE = re.compile(r"Required \((\d+) of (\d+) filled\)")
 CONFIRM_RE = re.compile(
@@ -331,6 +342,8 @@ def _find_node(cdp: CDP, sid: str, selector: str) -> int | None:
             return ids[0] if ids else None
         finally:
             cdp.send("DOM.discardSearchResults", {"searchId": r["searchId"]}, sid)
+    except INFRA_ERRORS:
+        raise  # a dead connection must not look like "button not found"
     except Exception:
         return None
 
@@ -354,9 +367,23 @@ def _panel_text(cdp: CDP, sids: list[str]) -> tuple[str | None, str]:
             if node:
                 try:
                     return sid, _call_on_node(cdp, sid, node, ROOT_TEXT_FN) or ""
+                except INFRA_ERRORS:
+                    raise
                 except Exception:
                     continue
     return None, ""
+
+
+def _visible_inputs(cdp: CDP, sids: list[str]) -> int:
+    total = 0
+    for sid in sids:
+        try:
+            total += int(cdp.eval(sid, VISIBLE_INPUTS_JS, await_promise=False) or 0)
+        except INFRA_ERRORS:
+            raise
+        except Exception:
+            continue
+    return total
 
 
 def _page_texts(cdp: CDP, tab_sid: str, pre_iframes: set[str]) -> tuple[str, str]:
@@ -365,6 +392,8 @@ def _page_texts(cdp: CDP, tab_sid: str, pre_iframes: set[str]) -> tuple[str, str
     try:
         url = cdp.eval(tab_sid, "location.href", await_promise=False) or ""
         chunks.append(cdp.eval(tab_sid, "document.body ? document.body.innerText : ''", await_promise=False) or "")
+    except INFRA_ERRORS:
+        raise
     except Exception:
         pass
     for t in cdp.targets():
@@ -372,6 +401,8 @@ def _page_texts(cdp: CDP, tab_sid: str, pre_iframes: set[str]) -> tuple[str, str
             try:
                 fsid = cdp.attach(t["targetId"])
                 chunks.append(cdp.eval(fsid, "document.body ? document.body.innerText : ''", await_promise=False) or "")
+            except INFRA_ERRORS:
+                raise
             except Exception:
                 continue
     return url, "\n".join(chunks)
@@ -383,6 +414,8 @@ def _frame_sessions(cdp: CDP, tab_sid: str, pre_iframes: set[str]) -> list[str]:
         if t["type"] == "iframe" and t["targetId"] not in pre_iframes:
             try:
                 sids.append(cdp.attach(t["targetId"]))
+            except INFRA_ERRORS:
+                raise
             except Exception:
                 continue
     return sids
@@ -406,79 +439,137 @@ def _trusted_click(cdp: CDP, sid: str, node_id: int) -> None:
         _call_on_node(cdp, sid, node_id, "function () { this.click(); }")
 
 
-def submit_one(cdp: CDP, sw_sid: str, url: str, dry_run: bool = False) -> tuple[str, str]:
-    """Autofill + submit one application. Returns (outcome, detail) where
-    outcome is 'applied', 'attention', or 'dry-ok'. Always closes the tab."""
-    tid = None
-    try:
-        close_duplicates(cdp, url)
-        pre_iframes = {t["targetId"] for t in cdp.targets() if t["type"] == "iframe"}
-        tid, tab_sid = open_tab(cdp, url)
-        tab_id = focus_tab(cdp, sw_sid, tid, url)
-        time.sleep(SETTLE_SEC)
-        try:
-            if cdp.eval(tab_sid, ENSURE_FORM, await_promise=False) == "clicked-apply":
-                time.sleep(5)
-        except Exception:
-            pass
-        dispatch_autofill(cdp, sw_sid, tab_id)
-
-        # 1. wait for Simplify's own "Autofill complete!" signal
-        panel_sid, text = None, ""
-        deadline = time.time() + AUTOFILL_WAIT_SEC
-        while time.time() < deadline:
-            time.sleep(3)
-            panel_sid, text = _panel_text(cdp, _frame_sessions(cdp, tab_sid, pre_iframes))
-            if "Autofill complete" in text:
-                break
-        if not panel_sid:
-            return "attention", "Simplify did not recognize an application form on this page"
-        if "Autofill complete" not in text:
-            return "attention", f"autofill did not complete within {AUTOFILL_WAIT_SEC}s"
-        time.sleep(POST_FILL_BUFFER_SEC)
-        _, text = _panel_text(cdp, [panel_sid])
-
-        # 2. safety gate: never submit with required answers missing
+def _wait_for_fill(cdp: CDP, sw_sid: str, tab_sid: str, tab_id: int, pre_iframes: set[str]):
+    """Wait until Simplify has finished filling. Done = the panel says
+    'Autofill complete', OR its required counter reads n-of-n and has held
+    steady (the completion wording isn't always shown). Returns
+    (panel_session, panel_text, done)."""
+    start = time.time()
+    retried = False
+    panel_sid, text, prev_req = None, "", None
+    while time.time() - start < AUTOFILL_WAIT_SEC:
+        time.sleep(3)
+        panel_sid, text = _panel_text(cdp, _frame_sessions(cdp, tab_sid, pre_iframes))
+        if "Autofill complete" in text:
+            return panel_sid, text, True
         m = REQUIRED_RE.search(text)
+        req = m.groups() if m else None
+        if req and req[0] == req[1] and req == prev_req and time.time() - start >= 20:
+            return panel_sid, text, True
+        prev_req = req
+        if not panel_sid and not retried and time.time() - start >= FORM_RETRY_AT_SEC:
+            # The form may only have appeared late (or sits behind an Apply
+            # button): look again and re-trigger autofill once.
+            retried = True
+            try:
+                if cdp.eval(tab_sid, ENSURE_FORM, await_promise=False) == "clicked-apply":
+                    time.sleep(5)
+            except INFRA_ERRORS:
+                raise
+            except Exception:
+                pass
+            dispatch_autofill(cdp, sw_sid, tab_id)
+    return panel_sid, text, False
+
+
+def _submit_one(cdp: CDP, sw_sid: str, url: str, dry_run: bool, opened: list) -> tuple[str, str]:
+    close_duplicates(cdp, url)
+    pre_iframes = {t["targetId"] for t in cdp.targets() if t["type"] == "iframe"}
+    tid, tab_sid = open_tab(cdp, url)
+    opened.append(tid)
+    tab_id = focus_tab(cdp, sw_sid, tid, url)
+    time.sleep(SETTLE_SEC)
+    try:
+        if cdp.eval(tab_sid, ENSURE_FORM, await_promise=False) == "clicked-apply":
+            time.sleep(5)
+    except INFRA_ERRORS:
+        raise
+    except Exception:
+        pass
+    dispatch_autofill(cdp, sw_sid, tab_id)
+
+    # 1. wait for Simplify to finish filling
+    panel_sid, text, done = _wait_for_fill(cdp, sw_sid, tab_sid, tab_id, pre_iframes)
+    if not panel_sid:
+        return "attention", "Simplify did not recognize an application form on this page"
+    m = REQUIRED_RE.search(text)
+    if not done:
         if m and int(m.group(1)) < int(m.group(2)):
             got, need = int(m.group(1)), int(m.group(2))
             return "attention", f"{need - got} required field(s) unfilled ({got} of {need})"
-        req = f"{m.group(1)}/{m.group(2)} required" if m else "required count n/a"
+        return "attention", f"autofill did not finish within {AUTOFILL_WAIT_SEC}s"
+    time.sleep(POST_FILL_BUFFER_SEC)
+    _, text = _panel_text(cdp, [panel_sid])
 
-        btn = _find_node(cdp, panel_sid, "#proxy-submit-button")
-        if not btn:
-            return "attention", "no Submit Application button in Simplify's panel"
-        if _call_on_node(cdp, panel_sid, btn, "function () { return !!this.disabled; }"):
-            return "attention", "Submit Application button is disabled"
-        if dry_run:
-            return "dry-ok", f"ready to submit ({req}) - not clicked (dry run)"
+    # 2. safety gate: never submit with required answers missing
+    m = REQUIRED_RE.search(text)
+    if m and int(m.group(1)) < int(m.group(2)):
+        got, need = int(m.group(1)), int(m.group(2))
+        return "attention", f"{need - got} required field(s) unfilled ({got} of {need})"
+    req = f"{m.group(1)}/{m.group(2)} required" if m else "required count n/a"
 
-        # 3. click, then require a NEW confirmation (text present before the
-        # click - e.g. 'thank you for your interest' boilerplate - doesn't count)
-        url0, page0 = _page_texts(cdp, tab_sid, pre_iframes)
-        before = len(CONFIRM_RE.findall(page0))
-        _trusted_click(cdp, panel_sid, btn)
-        deadline = time.time() + CONFIRM_WAIT_SEC
-        while time.time() < deadline:
-            time.sleep(2.5)
-            url1, page1 = _page_texts(cdp, tab_sid, pre_iframes)
-            if url1 != url0 and CONFIRM_URL_RE.search(url1):
-                return "applied", f"confirmation page ({req})"
-            if len(CONFIRM_RE.findall(page1)) > before:
-                return "applied", f"confirmation shown ({req})"
-            _, ptext = _panel_text(cdp, [panel_sid])
-            if CONFIRM_RE.search(ptext):
-                return "applied", f"Simplify reported submitted ({req})"
-        return "attention", "clicked Submit but saw no confirmation - verify manually (captcha/validation?)"
+    btn = _find_node(cdp, panel_sid, "#proxy-submit-button")
+    if not btn:
+        return "attention", "no Submit Application button in Simplify's panel"
+    if _call_on_node(cdp, panel_sid, btn, "function () { return !!this.disabled; }"):
+        return "attention", "Submit Application button is disabled"
+    if dry_run:
+        return "dry-ok", f"ready to submit ({req}) - not clicked (dry run)"
+
+    # 3. click, then require evidence that appears AFTER the click: a
+    # confirmation URL, new confirmation text (boilerplate like 'thank you for
+    # your interest' already on the page doesn't count), or the application
+    # form itself disappearing.
+    url0, page0 = _page_texts(cdp, tab_sid, pre_iframes)
+    before = len(CONFIRM_RE.findall(page0))
+    inputs0 = _visible_inputs(cdp, _frame_sessions(cdp, tab_sid, pre_iframes))
+    _trusted_click(cdp, panel_sid, btn)
+    deadline = time.time() + CONFIRM_WAIT_SEC
+    while time.time() < deadline:
+        time.sleep(2.5)
+        url1, page1 = _page_texts(cdp, tab_sid, pre_iframes)
+        if url1 != url0 and CONFIRM_URL_RE.search(url1):
+            return "applied", f"confirmation page ({req})"
+        if len(CONFIRM_RE.findall(page1)) > before:
+            return "applied", f"confirmation shown ({req})"
+        _, ptext = _panel_text(cdp, [panel_sid])
+        if CONFIRM_RE.search(ptext):
+            return "applied", f"Simplify reported submitted ({req})"
+        if inputs0 >= 3 and _visible_inputs(cdp, _frame_sessions(cdp, tab_sid, pre_iframes)) <= 1:
+            return "applied", f"application form closed after submit ({req})"
+    return "attention", "clicked Submit but saw no confirmation - verify manually (captcha/validation?)"
+
+
+def _alive(cdp: CDP) -> bool:
+    try:
+        cdp.send("Browser.getVersion")
+        return True
+    except Exception:
+        return False
+
+
+def submit_one(cdp: CDP, sw_sid: str, url: str, dry_run: bool = False) -> tuple[str, str]:
+    """Autofill + submit one application. Returns (outcome, detail):
+    'applied' | 'attention' | 'dry-ok' | 'infra' (connection to Chrome lost -
+    retry, never flag). Always closes the tab it opened."""
+    opened: list = []
+    try:
+        outcome, detail = _submit_one(cdp, sw_sid, url, dry_run, opened)
+    except INFRA_ERRORS as e:
+        outcome, detail = "infra", str(e)[:140]
     except Exception as e:  # noqa: BLE001
-        return "attention", f"error: {str(e)[:140]}"
-    finally:
-        if tid:
-            time.sleep(CLOSE_DELAY_SEC)
-            try:
-                cdp.send("Target.closeTarget", {"targetId": tid})
-            except Exception:
-                pass
+        outcome, detail = "attention", f"error: {str(e)[:140]}"
+    # Any job-level failure while the connection is actually dead is the
+    # connection's fault, not the job's.
+    if outcome == "attention" and not _alive(cdp):
+        outcome = "infra"
+    if opened and outcome != "infra":
+        time.sleep(CLOSE_DELAY_SEC)
+        try:
+            cdp.send("Target.closeTarget", {"targetId": opened[0]})
+        except Exception:
+            pass
+    return outcome, detail
 
 
 def _ensure_keeper_tab(cdp: CDP) -> None:
@@ -489,18 +580,44 @@ def _ensure_keeper_tab(cdp: CDP) -> None:
         cdp.send("Target.createTarget", {"url": "about:blank"})
 
 
-def run_submit(cdp: CDP, sw_sid: str, urls: list[str], dry_run: bool) -> int:
+def _connect_ready() -> tuple[CDP, str]:
+    """Connect (launching the automation Chrome if needed), make sure a
+    keeper tab exists, and attach to Simplify's service worker."""
+    cdp = connect()
+    _ensure_keeper_tab(cdp)
+    try:
+        _, sw_sid = find_simplify(cdp)
+    except RuntimeError:
+        # A freshly launched Chrome may not have woken Simplify yet.
+        cdp.send("Target.createTarget", {"url": "https://simplify.jobs/"})
+        time.sleep(8)
+        _, sw_sid = find_simplify(cdp, retries=10)
+    return cdp, sw_sid
+
+
+def run_submit(urls: list[str], dry_run: bool) -> int:
     sys.path.insert(0, str(REPO))
     from jobscrape.config import load_config, resolve_db_path
     from jobscrape.storage import Storage
 
     store = Storage(resolve_db_path(load_config()))
-    _ensure_keeper_tab(cdp)
+    cdp, sw_sid = _connect_ready()
     tag = " (DRY RUN - nothing will be submitted)" if dry_run else ""
     print(f"{len(urls)} job(s), one at a time{tag}. Don't type in the automation window.\n", flush=True)
     applied = attention = 0
     for n, url in enumerate(urls, 1):
         outcome, detail = submit_one(cdp, sw_sid, url, dry_run=dry_run)
+        if outcome == "infra":
+            print(f"[{n}/{len(urls)}] lost connection to the automation Chrome ({detail[:60]}) - reconnecting and retrying this job", flush=True)
+            try:
+                cdp, sw_sid = _connect_ready()
+                outcome, detail = submit_one(cdp, sw_sid, url, dry_run=dry_run)
+            except Exception as e:  # noqa: BLE001
+                outcome, detail = "infra", str(e)[:140]
+            if outcome == "infra":
+                left = len(urls) - n + 1
+                print(f"\nstopping: could not recover the automation Chrome. {left} job(s) left untouched (not flagged).", flush=True)
+                break
         job_id = store.id_for_url(url)
         if outcome == "applied":
             applied += 1
@@ -544,11 +661,11 @@ def main() -> int:
         print("no URLs given")
         return 1
 
+    if mode == "submit":
+        return run_submit(urls, dry_run)
+
     cdp = connect()
     _, sw_sid = find_simplify(cdp)
-
-    if mode == "submit":
-        return run_submit(cdp, sw_sid, urls, dry_run)
 
     if mode == "probe":
         print(f"PROBE: {urls[0]}")

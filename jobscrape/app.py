@@ -66,7 +66,32 @@ def _pick_autoapply_urls(count: int) -> list[str]:
     return mod.pick(count)
 
 
-def _bg_autoapply(count: int = 5, mode: str = "fill") -> None:
+def _urls_for_ids(ids: list, count: int) -> list[str]:
+    """Map tracker row ids (in the order the user sees them) to URLs, keeping
+    only rows that are still untouched: new, not applied, not flagged."""
+    store = Storage(resolve_db_path(load_config()))
+    urls: list[str] = []
+    try:
+        for raw in ids:
+            try:
+                job_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            r = store.conn.execute(
+                "SELECT url FROM jobs WHERE id = ? AND status = 'new' "
+                "AND applied_at IS NULL AND attention IS NULL",
+                (job_id,),
+            ).fetchone()
+            if r and r["url"] not in urls:
+                urls.append(r["url"])
+            if len(urls) >= count:
+                break
+    finally:
+        store.close()
+    return urls
+
+
+def _bg_autoapply(count: int = 5, mode: str = "fill", ids: list | None = None) -> None:
     """Run the CDP autoapply batch as a subprocess, streaming its output.
 
     mode 'fill': open `count` tabs (default 5 - ten simultaneous ATS tabs plus
@@ -76,7 +101,9 @@ def _bg_autoapply(count: int = 5, mode: str = "fill") -> None:
     """
     AUTOAPPLY_STATE.update(running=True, log=[], exit=None, urls=[], mode=mode)
     try:
-        urls = _pick_autoapply_urls(count)
+        # The tracker sends the rows it is showing, top first; the DB picker
+        # is only a fallback for callers that don't (e.g. old clients).
+        urls = _urls_for_ids(ids, count) if ids else _pick_autoapply_urls(count)
         AUTOAPPLY_STATE["urls"] = urls
         if not urls:
             AUTOAPPLY_STATE["log"].append("no eligible leads to apply to")
@@ -302,7 +329,8 @@ def autoapply():
     mode = "submit" if data.get("mode") == "submit" else "fill"
     cap = 50 if mode == "submit" else 10  # submit runs are one tab at a time
     count = max(1, min(cap, int(data.get("count", 5))))
-    threading.Thread(target=_bg_autoapply, args=(count, mode), daemon=True).start()
+    ids = data.get("ids") if isinstance(data.get("ids"), list) else None
+    threading.Thread(target=_bg_autoapply, args=(count, mode, ids), daemon=True).start()
     return jsonify(ok=True, count=count, mode=mode)
 
 
