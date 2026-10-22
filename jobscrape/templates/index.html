@@ -256,7 +256,8 @@
     <h2>Leads &amp; application tracker</h2>
     <div class="row" style="margin-bottom:12px">
       <button class="primary" id="autoapplyBtn" onclick="runAutoapply('fill')">⚡ Auto-apply top 5 (Simplify)</button>
-      <button id="autosubmitBtn" onclick="runAutoapply('submit')" title="One job at a time: autofill, click Simplify's Submit Application, mark applied. Failures get a 'needs human attention' label and are never retried.">▶ Start auto-applying 50</button>
+      <button id="autosubmitBtn" onclick="runAutoapply('submit')" title="One job at a time: autofill, click Simplify's Submit Application, mark applied. Failures get a 'needs human attention' label and are never retried.">▶ Start auto-applying</button>
+      <input type="number" id="autosubmitCount" min="1" max="50" value="50" style="width:70px" title="How many jobs to auto-apply (1-50)"> <span class="muted">jobs</span>
       <span class="muted" id="autoapplyState"></span>
     </div>
     <div class="runbox" id="autoapplyBox"></div>
@@ -567,6 +568,7 @@ function flagAutoapplyRows(urls) {
 function setAutoapplyButtons(disabled) {
   document.getElementById('autoapplyBtn').disabled = disabled;
   document.getElementById('autosubmitBtn').disabled = disabled;
+  document.getElementById('autosubmitCount').disabled = disabled;
 }
 // The bot works on exactly what the table shows, top first: current sort,
 // search and filters - skipping rows already applied, dismissed or flagged.
@@ -577,7 +579,12 @@ function topEligibleIds(n) {
     .map(tr => tr.dataset.id);
 }
 async function runAutoapply(mode) {
-  const count = mode === 'submit' ? 50 : 5;
+  let count = 5;
+  if (mode === 'submit') {
+    const box = document.getElementById('autosubmitCount');
+    count = Math.max(1, Math.min(50, parseInt(box.value, 10) || 0));
+    box.value = count;
+  }
   const ids = topEligibleIds(count);
   if (!ids.length) {
     alert('No eligible rows in the current view (new, not applied, not flagged). Adjust the filters and try again.');
