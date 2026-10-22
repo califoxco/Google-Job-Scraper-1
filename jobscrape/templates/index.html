@@ -256,8 +256,12 @@
     <h2>Leads &amp; application tracker</h2>
     <div class="row" style="margin-bottom:12px">
       <button class="primary" id="autoapplyBtn" onclick="runAutoapply('fill')">⚡ Auto-apply top 5 (Simplify)</button>
-      <button id="autosubmitBtn" onclick="runAutoapply('submit')" title="One job at a time: autofill, click Simplify's Submit Application, mark applied. Failures get a 'needs human attention' label and are never retried.">▶ Start auto-applying</button>
-      <input type="number" id="autosubmitCount" min="1" max="50" value="50" style="width:70px" title="How many jobs to auto-apply (1-50)"> <span class="muted">jobs</span>
+      <span class="muted" style="margin-left:8px">Auto-apply to</span>
+      <input type="text" inputmode="numeric" id="autosubmitCount" value="50" style="width:70px;text-align:center"
+             title="How many jobs to auto-apply (1-1000)" onfocus="this.select()"
+             onkeydown="if (event.key === 'Enter') runAutoapply('submit')">
+      <span class="muted">jobs</span>
+      <button class="primary" id="autosubmitBtn" onclick="runAutoapply('submit')" title="One job at a time: autofill, click Simplify's Submit Application, mark applied. Failures get a 'needs human attention' label and are never retried.">▶ Start</button>
       <span class="muted" id="autoapplyState"></span>
     </div>
     <div class="runbox" id="autoapplyBox"></div>
@@ -582,7 +586,7 @@ async function runAutoapply(mode) {
   let count = 5;
   if (mode === 'submit') {
     const box = document.getElementById('autosubmitCount');
-    count = Math.max(1, Math.min(50, parseInt(box.value, 10) || 0));
+    count = Math.max(1, Math.min(1000, parseInt(box.value, 10) || 0));
     box.value = count;
   }
   const ids = topEligibleIds(count);

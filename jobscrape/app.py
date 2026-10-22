@@ -327,7 +327,7 @@ def autoapply():
         return jsonify(ok=False, error="An autoapply batch is already running."), 409
     data = request.get_json(force=True, silent=True) or {}
     mode = "submit" if data.get("mode") == "submit" else "fill"
-    cap = 50 if mode == "submit" else 10  # submit runs are one tab at a time
+    cap = 1000 if mode == "submit" else 10  # submit runs are one tab at a time
     count = max(1, min(cap, int(data.get("count", 5))))
     ids = data.get("ids") if isinstance(data.get("ids"), list) else None
     threading.Thread(target=_bg_autoapply, args=(count, mode, ids), daemon=True).start()
