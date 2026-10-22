@@ -52,7 +52,7 @@ RUN_STATE: dict = {"running": False, "log": [], "summary": None, "error": None}
 # State for the background autoapply batch (autoapply/cdp_apply.py).
 # "urls" records exactly which leads the batch processed, so the tracker can
 # outline those rows until their status is updated.
-AUTOAPPLY_STATE: dict = {"running": False, "log": [], "exit": None, "urls": []}
+AUTOAPPLY_STATE: dict = {"running": False, "log": [], "exit": None, "urls": [], "mode": "fill"}
 
 
 def _pick_autoapply_urls(count: int) -> list[str]:
@@ -66,11 +66,15 @@ def _pick_autoapply_urls(count: int) -> list[str]:
     return mod.pick(count)
 
 
-def _bg_autoapply(count: int = 5) -> None:
-    # Default 5: ten simultaneous ATS tabs (+ Simplify + a resident LLM) OOMs
-    # Chrome's oldest background renderers ("Aw, Snap!") and loses their fills.
-    """Run the CDP autoapply batch as a subprocess, streaming its output."""
-    AUTOAPPLY_STATE.update(running=True, log=[], exit=None, urls=[])
+def _bg_autoapply(count: int = 5, mode: str = "fill") -> None:
+    """Run the CDP autoapply batch as a subprocess, streaming its output.
+
+    mode 'fill': open `count` tabs (default 5 - ten simultaneous ATS tabs plus
+    Simplify and a resident LLM OOM Chrome's oldest renderers) and leave them
+    filled for review. mode 'submit': one tab at a time, autofill + submit +
+    close, DB updated per job (cdp_apply.py submit).
+    """
+    AUTOAPPLY_STATE.update(running=True, log=[], exit=None, urls=[], mode=mode)
     try:
         urls = _pick_autoapply_urls(count)
         AUTOAPPLY_STATE["urls"] = urls
@@ -82,7 +86,7 @@ def _bg_autoapply(count: int = 5) -> None:
             [
                 sys.executable, "-u",
                 str(PROJECT_ROOT / "autoapply" / "cdp_apply.py"),
-                "run", *urls,
+                "submit" if mode == "submit" else "run", *urls,
             ],
             cwd=str(PROJECT_ROOT),
             stdout=subprocess.PIPE,
@@ -295,9 +299,11 @@ def autoapply():
     if AUTOAPPLY_STATE["running"]:
         return jsonify(ok=False, error="An autoapply batch is already running."), 409
     data = request.get_json(force=True, silent=True) or {}
-    count = max(1, min(10, int(data.get("count", 5))))
-    threading.Thread(target=_bg_autoapply, args=(count,), daemon=True).start()
-    return jsonify(ok=True, count=count)
+    mode = "submit" if data.get("mode") == "submit" else "fill"
+    cap = 50 if mode == "submit" else 10  # submit runs are one tab at a time
+    count = max(1, min(cap, int(data.get("count", 5))))
+    threading.Thread(target=_bg_autoapply, args=(count, mode), daemon=True).start()
+    return jsonify(ok=True, count=count, mode=mode)
 
 
 @app.get("/autoapply-status")

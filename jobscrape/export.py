@@ -68,7 +68,7 @@ def applied_workbook_bytes(jobs: list[dict]) -> bytes:
         ws.append([
             date,
             time,
-            "VA" if who == "va" else "Admin",
+            {"va": "VA", "auto": "Auto"}.get(who, "Admin"),
             company_from_url(j.get("url") or ""),
             j.get("title") or j.get("url") or "",
             j.get("ats") or "",

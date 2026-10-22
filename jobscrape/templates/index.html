@@ -95,6 +95,7 @@
   .notes-in:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
   .applied-cb, .na-cb { width: 16px; height: 16px; cursor: pointer; }
   .pill-bad { color: var(--bad); border-color: rgba(248,81,73,.5); }
+  .pill-warn { color: var(--warn); border-color: rgba(210,153,34,.6); cursor: help; }
   .match-pill { cursor: pointer; }
   .match-pill:hover { background: rgba(248,81,73,.12); }
   /* rows from the last auto-apply batch: needs a status update */
@@ -254,7 +255,8 @@
   <div class="panel">
     <h2>Leads &amp; application tracker</h2>
     <div class="row" style="margin-bottom:12px">
-      <button class="primary" id="autoapplyBtn" onclick="runAutoapply()">⚡ Auto-apply top 5 (Simplify)</button>
+      <button class="primary" id="autoapplyBtn" onclick="runAutoapply('fill')">⚡ Auto-apply top 5 (Simplify)</button>
+      <button id="autosubmitBtn" onclick="runAutoapply('submit')" title="One job at a time: autofill, click Simplify's Submit Application, mark applied. Failures get a 'needs human attention' label and are never retried.">▶ Start auto-applying 50</button>
       <span class="muted" id="autoapplyState"></span>
     </div>
     <div class="runbox" id="autoapplyBox"></div>
@@ -294,7 +296,7 @@
           <td><input type="checkbox" class="na-cb" title="Not a real link / not applicable"
                      {% if j.status == 'dismissed' %}checked{% endif %}
                      onchange="setDismissed({{ j.id }}, this.checked)"></td>
-          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a>{% if j.title_match == 0 %} <span class="pill pill-bad match-pill" title="LLM: doesn't match your target titles — click to mark as a match" onclick="setMatch({{ j.id }}, true)">✗ match</span>{% endif %}</td>
+          <td><a href="{{ j.url }}" target="_blank" rel="noopener">{{ j.title or j.url }}</a>{% if j.title_match == 0 %} <span class="pill pill-bad match-pill" title="LLM: doesn't match your target titles — click to mark as a match" onclick="setMatch({{ j.id }}, true)">✗ match</span>{% endif %}{% if j.attention and j.status == 'new' and not j.applied_at %} <span class="pill pill-warn" title="Auto-apply couldn't finish: {{ j.attention }}">⚠ needs human attention</span>{% endif %}</td>
           <td><span class="pill">{{ j.ats }}</span></td>
           <td class="muted nowrap found-at">{{ j.first_seen[:10] }}</td>
           <td class="muted nowrap applied-at">{{ (j.applied_at or '')|replace('T',' ') }}{% if j.applied_by == 'va' %} <span class="pill">VA</span>{% endif %}</td>
@@ -560,10 +562,19 @@ function flagAutoapplyRows(urls) {
   }
 }
 
-async function runAutoapply() {
-  const btn = document.getElementById('autoapplyBtn');
-  btn.disabled = true;
-  const res = await fetch('/autoapply', { method: 'POST' });
+function setAutoapplyButtons(disabled) {
+  document.getElementById('autoapplyBtn').disabled = disabled;
+  document.getElementById('autosubmitBtn').disabled = disabled;
+}
+async function runAutoapply(mode) {
+  if (mode === 'submit' && !confirm(
+      'Auto-apply will SUBMIT up to 50 real applications, one at a time, with no review.\n\n' +
+      'Successes are marked applied; failures get a "needs human attention" label.\nStart?')) return;
+  setAutoapplyButtons(true);
+  const res = await fetch('/autoapply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(mode === 'submit' ? { mode: 'submit', count: 50 } : { mode: 'fill', count: 5 }),
+  });
   if (res.status === 409) {
     document.getElementById('autoapplyState').textContent = 'Already running…';
     pollAutoapply();
@@ -580,14 +591,19 @@ async function pollAutoapply() {
   box.style.display = 'block';
   box.textContent = (st.log || []).join('\n') || 'Working…';
   box.scrollTop = box.scrollHeight;
-  flagAutoapplyRows(st.urls);
+  // Fill batches leave tabs for you to review -> outline them. Submit runs
+  // resolve rows themselves (applied / needs attention), so no outline.
+  if (st.mode !== 'submit') flagAutoapplyRows(st.urls);
   if (st.running) {
     document.getElementById('autoapplyState').textContent = 'Running — hands off the keyboard…';
     setTimeout(pollAutoapply, 1500);
   } else {
-    document.getElementById('autoapplyBtn').disabled = false;
+    setAutoapplyButtons(false);
+    const done = st.mode === 'submit'
+      ? 'Done — refresh to see applied rows and any ⚠ needs-human-attention rows (pinned to the top).'
+      : 'Done — the red-outlined rows below are this batch: review, submit, then ✓ or ✕ them.';
     document.getElementById('autoapplyState').textContent =
-      st.exit === 0 ? 'Done — the red-outlined rows below are this batch: review, submit, then ✓ or ✕ them.' : (st.exit === null ? '' : 'Finished with errors — see log.');
+      st.exit === 0 ? done : (st.exit === null ? '' : 'Finished with errors — see log.');
   }
 }
 

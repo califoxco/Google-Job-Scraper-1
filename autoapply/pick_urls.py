@@ -24,10 +24,13 @@ EXCLUDE_HOSTS = (
 def pick(limit: int) -> list[str]:
     conn = sqlite3.connect(REPO / "results" / "jobs.db")
     not_like = " ".join(f"AND url NOT LIKE '%{h}%'" for h in EXCLUDE_HOSTS)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+    # Rows the auto-applier already failed on wait for a human; never retry.
+    skip_flagged = "AND attention IS NULL " if "attention" in cols else ""
     rows = conn.execute(
         "SELECT url FROM jobs "
         "WHERE status = 'new' AND applied_at IS NULL AND title_match = 1 "
-        f"{not_like} "
+        f"{skip_flagged}{not_like} "
         "ORDER BY first_seen DESC, id DESC LIMIT ?",
         (limit,),
     )

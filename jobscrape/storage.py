@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     applied_at  TEXT,
     applied_by  TEXT,
     notes       TEXT,
-    title_match INTEGER
+    title_match INTEGER,
+    attention   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
 CREATE INDEX IF NOT EXISTS idx_jobs_ats        ON jobs(ats);
@@ -75,6 +76,9 @@ class Storage:
             ("applied_by", "TEXT"),
             ("notes", "TEXT"),
             ("title_match", "INTEGER"),
+            # Why auto-submit failed; non-NULL = "needs human attention" and
+            # the auto-applier skips the row from then on.
+            ("attention", "TEXT"),
         ):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ctype}")
@@ -110,8 +114,13 @@ class Storage:
         return False
 
     def recent_jobs(self, limit: int = 100) -> list[dict]:
+        # Open rows the auto-applier couldn't finish float to the top until
+        # a human triages them.
         cur = self.conn.execute(
-            "SELECT * FROM jobs ORDER BY first_seen DESC, id DESC LIMIT ?", (limit,)
+            "SELECT * FROM jobs ORDER BY "
+            "(attention IS NOT NULL AND status = 'new' AND applied_at IS NULL) DESC, "
+            "first_seen DESC, id DESC LIMIT ?",
+            (limit,),
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -188,6 +197,29 @@ class Storage:
 
     def set_notes(self, job_id: int, notes: str) -> None:
         self.conn.execute("UPDATE jobs SET notes = ? WHERE id = ?", (notes, job_id))
+        self.conn.commit()
+
+    # --- auto-apply bookkeeping ---------------------------------------------
+
+    def id_for_url(self, url: str) -> int | None:
+        r = self.conn.execute("SELECT id FROM jobs WHERE url = ?", (url,)).fetchone()
+        return r["id"] if r else None
+
+    def mark_auto_applied(self, job_id: int) -> None:
+        """Auto-applier confirmed a submission: applied + timestamp, by 'auto'."""
+        self.conn.execute(
+            "UPDATE jobs SET status = 'applied', applied_at = COALESCE(applied_at, ?), "
+            "applied_by = COALESCE(applied_by, 'auto'), attention = NULL WHERE id = ?",
+            (_now_local(), job_id),
+        )
+        self.conn.commit()
+
+    def set_attention(self, job_id: int, reason: str | None) -> None:
+        """Flag a lead as needing human attention (or clear with None)."""
+        self.conn.execute(
+            "UPDATE jobs SET attention = ? WHERE id = ?",
+            (reason[:200] if reason else None, job_id),
+        )
         self.conn.commit()
 
     def jobs_needing_match(self, limit: int = 2000) -> list[dict]:

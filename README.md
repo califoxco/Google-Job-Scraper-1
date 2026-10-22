@@ -242,6 +242,26 @@ don't type during a run. Tabs stay open; review, finish, submit, then tick ✓
 in the tracker. `autoapply.ps1` (calibrated screen-clicking) remains as a
 legacy fallback.
 
+### Hands-off submitting (`submit` mode)
+
+The tracker's **▶ Start auto-applying 50** button (or
+`cdp_apply.py submit --from-db 50`) goes further: one tab at a time, it
+autofills, waits for Simplify's panel to report *Autofill complete!*, and
+clicks Simplify's **Submit Application** button — then closes the tab and
+updates the tracker itself.
+
+- **Safety gate:** it never submits while Simplify's panel shows unfilled
+  required fields (`Required (n of m filled)`).
+- **Success** means a confirmation that *appears after* the click (a
+  confirmation URL, or "application submitted / thank you for applying" text
+  that wasn't on the page before). The row is marked applied, by `auto`.
+- **Anything else** — no form detected, autofill timeout, missing required
+  answers, no confirmation — labels the row **⚠ needs human attention** with
+  the reason (hover the pill). Those rows are pinned to the top of the
+  tracker and are never auto-retried.
+
+Add `--dry-run` to rehearse the whole flow without clicking Submit.
+
 ## Run the scraper headlessly
 
 ```powershell
@@ -309,4 +329,4 @@ leak.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
+
