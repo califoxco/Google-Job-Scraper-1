@@ -479,6 +479,11 @@ def _submit_one(cdp: CDP, sw_sid: str, url: str, dry_run: bool, opened: list) ->
     opened.append(tid)
     tab_id = focus_tab(cdp, sw_sid, tid, url)
     time.sleep(SETTLE_SEC)
+    # Simplify only fills visible pages. A locked screen or minimized window
+    # makes Chrome report every page hidden - an environment problem, not the
+    # job's, so stop the run instead of flagging jobs that were never tried.
+    if cdp.eval(tab_sid, "document.visibilityState", await_promise=False) != "visible":
+        return "blocked", "page not visible - screen locked or automation window minimized"
     try:
         if cdp.eval(tab_sid, ENSURE_FORM, await_promise=False) == "clicked-apply":
             time.sleep(5)
@@ -551,7 +556,8 @@ def _alive(cdp: CDP) -> bool:
 def submit_one(cdp: CDP, sw_sid: str, url: str, dry_run: bool = False) -> tuple[str, str]:
     """Autofill + submit one application. Returns (outcome, detail):
     'applied' | 'attention' | 'dry-ok' | 'infra' (connection to Chrome lost -
-    retry, never flag). Always closes the tab it opened."""
+    retry, never flag) | 'blocked' (page not visible, e.g. screen locked -
+    stop the run, never flag). Always closes the tab it opened."""
     opened: list = []
     try:
         outcome, detail = _submit_one(cdp, sw_sid, url, dry_run, opened)
@@ -604,7 +610,7 @@ def run_submit(urls: list[str], dry_run: bool) -> int:
     cdp, sw_sid = _connect_ready()
     tag = " (DRY RUN - nothing will be submitted)" if dry_run else ""
     print(f"{len(urls)} job(s), one at a time{tag}. Don't type in the automation window.\n", flush=True)
-    applied = attention = 0
+    applied = attention = ready = 0
     for n, url in enumerate(urls, 1):
         outcome, detail = submit_one(cdp, sw_sid, url, dry_run=dry_run)
         if outcome == "infra":
@@ -618,6 +624,10 @@ def run_submit(urls: list[str], dry_run: bool) -> int:
                 left = len(urls) - n + 1
                 print(f"\nstopping: could not recover the automation Chrome. {left} job(s) left untouched (not flagged).", flush=True)
                 break
+        if outcome == "blocked":
+            left = len(urls) - n + 1
+            print(f"\nstopping: {detail}. {left} job(s) left untouched (not flagged).", flush=True)
+            break
         job_id = store.id_for_url(url)
         if outcome == "applied":
             applied += 1
@@ -627,11 +637,13 @@ def run_submit(urls: list[str], dry_run: bool) -> int:
             attention += 1
             if job_id and not dry_run:
                 store.set_attention(job_id, detail)
+        elif outcome == "dry-ok":
+            ready += 1
         mark = {"applied": "ok ", "dry-ok": "-- "}.get(outcome, "!! ")
         print(f"[{n}/{len(urls)}] {mark}{outcome:<9} {detail[:70]:<70} {url[:60]}", flush=True)
     store.close()
     if dry_run:
-        print(f"\ndry run done: {len(urls) - attention} ready, {attention} would need attention.")
+        print(f"\ndry run done: {ready} ready, {attention} would need attention.")
     else:
         print(f"\ndone: {applied} submitted + marked applied, {attention} flagged 'needs human attention'.")
     return 0

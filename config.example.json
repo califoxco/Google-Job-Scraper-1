@@ -27,6 +27,7 @@
   "llm_match_enabled": true,
   "ollama_url": "http://127.0.0.1:11434",
   "ollama_model": "qwen2.5:14b",
+  "auto_apply_after_scrape": 50,
   "simplify_search_enabled": true,
   "simplify_url": "https://simplify.jobs/jobs?type=Full-Time&experience_level=Senior&functions=Software+Engineering&min_salary=180000&posted_within_days=7&location=remote%7ERemote+in+USA"
 }

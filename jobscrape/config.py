@@ -166,6 +166,10 @@ DEFAULT_CONFIG = {
     # Typesense filter_by string copied from simplify.jobs' own search
     # requests; __SINCE__ becomes the epoch N days ago. The API key is the
     # public search-only key Simplify ships in its frontend.
+    # After each scheduled scrape, auto-submit this many jobs from the top of
+    # the tracker (autoapply/after_scrape.py). 0 = off. Needs an unlocked
+    # screen; a locked one makes the run stop without flagging anything.
+    "auto_apply_after_scrape": 50,
     "simplify_search_enabled": True,
     # Paste your simplify.jobs/jobs?... search URL (with all filters set) here
     # or in the UI; it is parsed into the Typesense filter automatically and
